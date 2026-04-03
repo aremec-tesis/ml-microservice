@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-FastAPI microservice that predicts cognitive performance levels (bajo/medio/alto) for Alzheimer's patients using an SVM classifier. It receives behavioral metrics from a Unity VR application and returns a classification. All code lives in a single file (`main.py`).
+FastAPI microservice that predicts cognitive performance levels (low/medium/high) for patients with cognitive deterioration using an SVM classifier exported to ONNX. It receives session data from a Unity VR application, calculates cognitive metrics, returns a classification with difficulty adjustment recommendation, and persists results to PostgreSQL (TimescaleDB).
 
 ## Commands
 
@@ -12,29 +12,31 @@ FastAPI microservice that predicts cognitive performance levels (bajo/medio/alto
 # Install dependencies (use the .venv virtual environment)
 .venv/Scripts/pip.exe install -r requirements.txt
 
-# Run the server (auto-trains model on first run if .pkl files are missing)
+# Train the model (generates model.onnx + scaler.joblib)
+.venv/Scripts/python.exe train.py
+
+# Run the server (requires model.onnx, scaler.joblib, and a running PostgreSQL)
 .venv/Scripts/python.exe main.py
 
 # Test the endpoint
-curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"tiempo_reaccion": 1200, "aciertos": 8, "errores": 2, "tiempo_total": 300}'
-
-# Retrain the model manually
-.venv/Scripts/python.exe -c "from main import entrenar_modelo; entrenar_modelo()"
+curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"patient_id": 1, "total_objects": 10, "correct_objects": 7, "total_events": 5, "correct_events": 4, "comprehension_score": 2, "response_times": [2.1, 3.5, 1.8], "total_questions": 10, "incorrect_answers": 2, "interaction_events": 8, "expected_interactions": 10}'
 ```
 
 ## Architecture
 
-Single-file architecture (`main.py`) with these sections:
+Multi-file architecture:
 
-1. **Pydantic models** — `MetricasPaciente` (input validation) and `PrediccionResponse` (output)
-2. **`entrenar_modelo()`** — Generates synthetic training data (60 samples per class), fits StandardScaler + SVC(kernel='rbf'), saves both to `.pkl` files
-3. **`lifespan`** — FastAPI lifespan handler that loads existing `.pkl` files or triggers training if they don't exist
-4. **`POST /predict`** — Receives metrics, scales with the loaded scaler, predicts with the loaded SVM, maps numeric prediction to label via `ETIQUETAS` dict
-
-The model and scaler are held as module-level globals, loaded once at startup. The feature order is fixed: `[tiempo_reaccion, aciertos, errores, tiempo_total]`.
+- **`metrics.py`** — Pydantic models (`SessionInput`, `SessionMetrics`, `PredictionResponse`), metric calculation functions, recommendation logic, and feature vector assembly
+- **`train.py`** — Standalone training script: reads `dataset/synthetic_vr_dataset.csv`, trains StandardScaler + SVC, exports model to ONNX via skl2onnx, saves scaler with joblib
+- **`model_handler.py`** — Loads `model.onnx` (onnxruntime) and `scaler.joblib` (joblib) at startup; exposes `predict()` function
+- **`database.py`** — Async PostgreSQL connection pool (asyncpg), DDL for `schema_telemetria.metricas_sesion`, insert/query functions
+- **`main.py`** — FastAPI app with lifespan (model + DB init), CORS middleware, `POST /predict` endpoint
 
 ## Key Conventions
 
-- All code, comments, variable names, and API responses are in Spanish
-- Classification labels: `{0: "bajo", 1: "medio", 2: "alto"}`
-- The scaler and model must always be saved/loaded as a pair — retraining one without the other will break predictions
+- Classification labels: `{0: "low", 1: "medium", 2: "high"}` — explicit mapping, NOT LabelEncoder
+- Feature vector order: `[ORS, ERS, SCS, RTA, ATS, ER, SPS]` — must match across train.py, metrics.py, and model_handler.py
+- The scaler and ONNX model must always be saved/loaded as a pair
+- ONNX inference requires float32 input (scaler outputs float64, cast is required)
+- DB credentials loaded from `.env` via python-dotenv
+- Recommendation thresholds: SPS < 0.4 → decrease; 0.4 ≤ SPS ≤ 0.7 → maintain; SPS > 0.7 → increase
