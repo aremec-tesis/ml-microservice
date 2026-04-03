@@ -3,3 +3,9 @@ uvicorn
 scikit-learn
 joblib
 pydantic
+numpy
+pandas
+onnxruntime
+skl2onnx
+asyncpg
+python-dotenv
