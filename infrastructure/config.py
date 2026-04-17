@@ -10,8 +10,8 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-MODEL_PATH = BASE_DIR / "model.onnx"
-SCALER_PATH = BASE_DIR / "scaler.joblib"
+MODEL_PATH = BASE_DIR / "misc" / "model.onnx"
+SCALER_PATH = BASE_DIR / "misc" / "scaler.joblib"
 
 HISTORY_WINDOW = 10
 

@@ -12,8 +12,8 @@ FastAPI microservice that predicts cognitive performance levels (low/medium/high
 # Install dependencies (use the .venv virtual environment)
 .venv/Scripts/pip.exe install -r requirements.txt
 
-# Train the model (generates model.onnx + scaler.joblib)
-.venv/Scripts/python.exe train.py
+# Train the model (generates misc/model.onnx + misc/scaler.joblib)
+.venv/Scripts/python.exe misc/train.py
 
 # Run the server (requires model.onnx, scaler.joblib, and a running PostgreSQL)
 .venv/Scripts/python.exe main.py
