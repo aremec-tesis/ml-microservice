@@ -12,20 +12,101 @@ El modelo clasifica cada sesión VR en uno de tres niveles de rendimiento cognit
 Sesión VR (Unity)
        │
        ▼
-Cálculo de métricas cognitivas  ←  metrics.py
+Validación Pydantic              ←  interfaces/http/schemas.py (SessionInput)
+       │
+       ▼
+Lectura de historial del paciente ←  app/queries/get_patient_history.py
+                                     → infrastructure/persistence/session_repository.py
+       │
+       ▼
+Cálculo de métricas cognitivas   ←  domain/session_metrics.py (SessionMetrics.from_raw)
   [ORS, ERS, SCS, RTA, ATS, ER, SPS]
        │
        ▼
-Normalización (StandardScaler)  ←  scaler.joblib
+Contexto longitudinal             ←  domain/patient_context.py (PatientContext.from_history)
+  (baseline + tendencia + delta)
        │
        ▼
-Inferencia SVM (ONNX Runtime)   ←  model.onnx
+Normalización (StandardScaler)    ←  scaler.joblib
        │
        ▼
-Clasificación + Recomendación   →  POST /predict
+Inferencia SVM (ONNX Runtime)     ←  infrastructure/ml/onnx_classifier.py
+       │                               └─→  Clasificación: low / medium / high
+       ▼
+Motor de personalización clínica  ←  infrastructure/ml/personalization_engine.py
+                                     reglas interpretables + contexto del paciente
+       │
+       ▼
+Recomendación personalizada       →  increase / maintain / decrease
+       │
+       ▼
+Persistencia de sesión            ←  infrastructure/persistence/session_repository.py
+  (incluye contexto usado)            insert con baseline_sps, trend, delta_sps, session_count
+       │
+       ▼
+Respuesta JSON                    →  POST /predict
+  (metrics + prediction + recommendation + context)
 ```
 
+Toda la orquestación vive en `app/commands/predict_session.py` (comando CQRS) para que la capa HTTP sea delgada y el flujo sea trivialmente testeable sin FastAPI.
+
 El modelo se entrena **una sola vez** con el script `train.py`, se exporta al formato estándar ONNX, y en producción el microservicio lo carga en memoria para inferencia eficiente sin dependencia de scikit-learn.
+
+## Enfoque híbrido — ML clasificatorio + motor de personalización clínica
+
+La propuesta central del proyecto es el **ajuste de dificultad totalmente personalizado** para cada paciente. Para lograrlo de forma defendible y clínicamente interpretable, el microservicio adopta una arquitectura **híbrida de dos capas** dentro del endpoint `/predict`:
+
+**Capa 1 — Clasificación ML (SVM objetivo)**
+El SVM clasifica el rendimiento cognitivo de la sesión actual (low / medium / high) usando exclusivamente las 7 métricas de esa sesión. Esta capa es **estateless y objetiva**: dos pacientes con el mismo desempeño en una sesión reciben la misma clasificación.
+
+**Capa 2 — Motor de personalización clínica (stateful)**
+Sobre la clasificación del SVM, un motor de reglas interpretables combina la predicción con el **historial longitudinal del paciente** recuperado de la base de datos TimescaleDB para producir una recomendación de dificultad **personalizada a la trayectoria individual** del paciente. El motor considera:
+
+- **Baseline del paciente**: media móvil ponderada del SPS sobre las últimas N sesiones
+- **Tendencia**: pendiente de SPS sobre la ventana de historial → `improving` / `stable` / `declining`
+- **Delta relativo**: diferencia entre el SPS actual y el baseline personal del paciente
+- **Número de sesiones previas**: modula cuánta influencia tiene el historial (cold-start)
+
+Esta separación garantiza que:
+
+1. **El modelo ML permanece puro, reentrenable y auditable** — su rol es clasificar, no personalizar.
+2. **La personalización es transparente y defendible clínicamente** — cada ajuste de dificultad puede trazarse a reglas interpretables basadas en literatura de neurorrehabilitación.
+3. **El sistema evoluciona de forma segura hacia datos reales** — cuando existan datos clínicos longitudinales, la capa de personalización puede migrar progresivamente hacia features del propio modelo ML sin reescribir el sistema.
+
+En contextos clínicos, los sistemas híbridos ML + reglas interpretables son ampliamente preferidos frente a modelos caja-negra, precisamente porque un terapeuta debe poder entender **por qué** el sistema recomendó aumentar o disminuir la dificultad. Este enfoque híbrido no es una limitación del proyecto: es una decisión de diseño alineada con buenas prácticas de IA aplicada a la salud.
+
+### Reglas concretas del motor de personalización
+
+| Condición | Ajuste aplicado |
+|---|---|
+| Paciente sin historial (cold start) | Regla base SPS sin personalización |
+| `delta_sps < -0.15` respecto al baseline | `decrease_difficulty` (caída significativa) |
+| Tendencia `declining` y regla base pedía `increase` | Se fuerza `maintain_difficulty` (no presionar) |
+| Tendencia `improving` + regla base `maintain` + `SPS > 0.6` | Se fuerza `increase_difficulty` (premiar progreso) |
+| Cualquier otro caso | Regla base por SPS |
+
+Los umbrales están definidos como constantes documentadas en `infrastructure/ml/personalization_engine.py` y pueden calibrarse sin modificar la lógica.
+
+### Contenido de la respuesta del endpoint
+
+La respuesta incluye el contexto clínico usado, permitiendo que Unity o el terapeuta visualicen el razonamiento detrás de cada recomendación:
+
+```json
+{
+  "metrics": { "ors": 0.70, "ers": 0.80, "scs": 1.0, "rta": 2.46, "ats": 0.80, "er": 0.20, "sps": 0.81 },
+  "prediction": "high",
+  "recommendation": "increase_difficulty",
+  "context": {
+    "baseline_sps": 0.62,
+    "trend": "improving",
+    "delta_sps": 0.19,
+    "session_count": 7,
+    "cold_start": false
+  }
+}
+```
+
+Esto convierte al sistema en una herramienta de apoyo clínico transparente: cada decisión queda trazada y auditada en la base de datos (`schema_telemetria.metricas_sesion` guarda el contexto usado en cada inferencia).
 
 ## Features del modelo
 
