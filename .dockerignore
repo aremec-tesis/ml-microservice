@@ -1,0 +1,27 @@
+.git
+.gitignore
+.venv
+.claude
+.env
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Training-only assets — not needed at runtime
+misc/dataset/
+misc/Plans/
+misc/generate_dataset.py
+misc/train.py
+
+# Docs and dev files
+README.md
+ML.md
+REQUEST.md
+CLAUDE.md
+Dockerfile
+.dockerignore

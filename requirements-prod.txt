@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+numpy
+joblib
+scikit-learn
+onnxruntime
+asyncpg
+python-dotenv
