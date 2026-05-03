@@ -14,8 +14,11 @@ CREATE TABLE IF NOT EXISTS schema_telemetria.metricas_sesion (
     patient_id INTEGER NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    total_objects INTEGER NOT NULL,
-    correct_objects INTEGER NOT NULL,
+    correct_key_objects INTEGER NOT NULL,
+    correct_secondary_objects INTEGER NOT NULL,
+    incorrect_objects INTEGER NOT NULL,
+    total_key_objects INTEGER NOT NULL,
+    total_secondary_objects INTEGER NOT NULL,
     total_events INTEGER NOT NULL,
     correct_events INTEGER NOT NULL,
     comprehension_score INTEGER NOT NULL,
@@ -25,21 +28,30 @@ CREATE TABLE IF NOT EXISTS schema_telemetria.metricas_sesion (
     interaction_events INTEGER NOT NULL,
     expected_interactions INTEGER NOT NULL,
 
-    ors NUMERIC(5,4) NOT NULL,
+    ors NUMERIC(6,4) NOT NULL,
     ers NUMERIC(5,4) NOT NULL,
     scs NUMERIC(5,4) NOT NULL,
     rta NUMERIC(8,4) NOT NULL,
-    ats NUMERIC(5,4) NOT NULL,
+    ats NUMERIC(6,4) NOT NULL,
     er  NUMERIC(5,4) NOT NULL,
-    sps NUMERIC(5,4) NOT NULL,
+    sps NUMERIC(6,4) NOT NULL,
 
-    prediction VARCHAR(10) NOT NULL,
-    recommendation VARCHAR(25) NOT NULL,
-
-    baseline_sps NUMERIC(5,4) NOT NULL,
-    trend VARCHAR(15) NOT NULL,
+    baseline_sps NUMERIC(6,4) NOT NULL,
+    slope_sps NUMERIC(7,5) NOT NULL,
     delta_sps NUMERIC(6,4) NOT NULL,
+    mean_ors NUMERIC(6,4) NOT NULL,
+    mean_ers NUMERIC(5,4) NOT NULL,
+    mean_er NUMERIC(5,4) NOT NULL,
+    mean_rta NUMERIC(8,4) NOT NULL,
+    std_sps NUMERIC(6,4) NOT NULL,
     session_count INTEGER NOT NULL,
+    cold_start BOOLEAN NOT NULL,
+
+    cognitive_level VARCHAR(10) NOT NULL,
+    recommendation VARCHAR(25) NOT NULL,
+    prob_decrease NUMERIC(5,4) NOT NULL,
+    prob_maintain NUMERIC(5,4) NOT NULL,
+    prob_increase NUMERIC(5,4) NOT NULL,
 
     PRIMARY KEY (id, created_at)
 );

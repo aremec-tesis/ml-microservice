@@ -1,8 +1,8 @@
 # Cognitive Performance API
 
-Microservicio en Python con FastAPI que predice el nivel de rendimiento cognitivo de pacientes con deterioro cognitivo a partir de metricas de sesion capturadas en una aplicacion de realidad virtual desarrollada en Unity.
+Microservicio en Python con FastAPI que recomienda un ajuste de dificultad personalizado (`decrease` / `maintain` / `increase`) para pacientes con deterioro cognitivo a partir de metricas de sesion capturadas en una aplicacion de realidad virtual desarrollada en Unity.
 
-Utiliza un modelo SVM (Support Vector Machine) entrenado con scikit-learn, exportado a formato ONNX para inferencia de alto rendimiento. Clasifica el rendimiento en tres niveles: **low**, **medium** y **high**, y retorna una recomendacion de ajuste de dificultad **personalizada al historial longitudinal del paciente**.
+Utiliza un modelo SVM (Support Vector Machine) **stateful** entrenado con scikit-learn y exportado a formato ONNX. El modelo consume tanto las 7 metricas de la sesion actual como **9 features agregadas del historial longitudinal del paciente** (ultimas 10 sesiones), produciendo directamente la recomendacion de dificultad junto con probabilidades por clase para trazabilidad clinica. Ademas se reporta un `cognitive_level` (low/medium/high) derivado deterministicamente del SPS como informacion adicional para el terapeuta.
 
 ## Requisitos
 
@@ -37,19 +37,22 @@ DATABASE_PASSWORD=changeme
 DATABASE_NAME=aremec
 ```
 
-## Entrenamiento del modelo
+## Generacion del dataset y entrenamiento
 
-Antes de ejecutar el servidor por primera vez, se debe entrenar el modelo:
+Antes de ejecutar el servidor por primera vez, generar el dataset sintetico longitudinal y entrenar el modelo:
 
 ```bash
+# 1. Generar dataset (~6000 sesiones para 500 pacientes con trayectorias longitudinales)
+python misc/generate_dataset.py
+
+# 2. Entrenar el modelo SVM stateful (16 features, target = recommendation)
 python misc/train.py
 ```
 
-Esto genera dos archivos dentro de `misc/`:
-- `misc/model.onnx` — Modelo SVM en formato ONNX
-- `misc/scaler.joblib` — StandardScaler ajustado al dataset
-
-El script utiliza el dataset en `misc/dataset/synthetic_vr_dataset.csv`.
+Esto genera:
+- `misc/dataset/synthetic_vr_dataset.csv` — Dataset de entrenamiento
+- `misc/model.onnx` — Modelo SVM stateful en formato ONNX (con `predict_proba`)
+- `misc/scaler.joblib` — StandardScaler ajustado a las 16 features
 
 ## Ejecucion
 
@@ -70,12 +73,15 @@ El servidor se inicia en `http://127.0.0.1:8000`. Al arrancar, carga el modelo O
 ```json
 {
   "patient_id": 1,
-  "total_objects": 10,
-  "correct_objects": 7,
+  "correct_key_objects": 4,
+  "correct_secondary_objects": 5,
+  "incorrect_objects": 1,
+  "total_key_objects": 5,
+  "total_secondary_objects": 8,
   "total_events": 5,
   "correct_events": 4,
   "comprehension_score": 2,
-  "response_times": [2.1, 3.5, 1.8],
+  "response_times": [2.1, 3.5, 1.8, 2.0, 2.5, 1.9, 2.3, 2.1, 2.0, 1.7],
   "total_questions": 10,
   "incorrect_answers": 2,
   "interaction_events": 8,
@@ -83,172 +89,110 @@ El servidor se inicia en `http://127.0.0.1:8000`. Al arrancar, carga el modelo O
 }
 ```
 
-### Descripcion de parametros
+Para la descripcion detallada de cada parametro, ver [REQUEST.md](REQUEST.md).
 
----
+### Resumen de metricas y formulas
 
-**`patient_id`** · `int` · Requerido
-
-Identificador numerico unico del paciente dentro del sistema. Se usa para recuperar el historial de sesiones anteriores y personalizar la recomendacion de dificultad. No se valida su existencia previa — si es la primera sesion del paciente, el sistema opera en modo cold start usando unicamente los datos de la sesion actual.
-
----
-
-**`total_objects`** · `int >= 0` · Requerido
-
-Cantidad total de objetos que fueron presentados al paciente durante la escena VR para que los memorice o reconozca. Actua como denominador en el calculo de ORS (Object Recall Score). Debe ser mayor que cero para que la metrica tenga valor; si se envia 0, ORS se fija en 0.
-
----
-
-**`correct_objects`** · `int >= 0` · Requerido
-
-Cantidad de objetos que el paciente identifico o recordo correctamente al ser evaluado. Debe ser menor o igual a `total_objects`. Se usa junto con `total_objects` para calcular ORS = `correct_objects / total_objects`.
-
----
-
-**`total_events`** · `int >= 0` · Requerido
-
-Cantidad total de eventos narrativos que ocurrieron durante la sesion VR (acciones, situaciones o secuencias que el paciente debio observar y retener). Actua como denominador en el calculo de ERS (Event Recall Score). Si se envia 0, ERS se fija en 0.
-
----
-
-**`correct_events`** · `int >= 0` · Requerido
-
-Cantidad de eventos narrativos que el paciente recordo o identifico correctamente. Debe ser menor o igual a `total_events`. Se usa para calcular ERS = `correct_events / total_events`.
-
----
-
-**`comprehension_score`** · `int` · Valores: `0`, `1` o `2` · Requerido
-
-Puntuacion cualitativa que representa el nivel de comprension narrativa del paciente sobre la historia o contexto de la sesion VR. La escala es:
-
-| Valor | Significado |
-|---|---|
-| `0` | Sin comprension — el paciente no logro entender la narrativa |
-| `1` | Comprension parcial — entendio parte del contexto |
-| `2` | Comprension completa — entendio la narrativa en su totalidad |
-
-Se normaliza internamente a SCS = `comprehension_score / 2`, obteniendo un valor entre 0.0 y 1.0.
-
----
-
-**`response_times`** · `float[]` · Requerido
-
-Lista de tiempos de respuesta individuales del paciente en segundos, uno por cada pregunta o interaccion evaluada durante la sesion. Puede contener cualquier cantidad de elementos (al menos uno es recomendable). Se calcula el promedio para obtener RTA (Response Time Average). Tiempos altos indican mayor latencia cognitiva; tiempos bajos indican respuesta rapida.
-
-Ejemplo: `[2.1, 3.5, 1.8]` representa tres respuestas con tiempos de 2.1 s, 3.5 s y 1.8 s.
-
----
-
-**`total_questions`** · `int >= 0` · Requerido
-
-Cantidad total de preguntas realizadas al paciente durante o al finalizar la sesion VR. Actua como denominador en el calculo de ER (Error Rate). Si se envia 0, ER se fija en 0.
-
----
-
-**`incorrect_answers`** · `int >= 0` · Requerido
-
-Cantidad de preguntas que el paciente respondio incorrectamente. Debe ser menor o igual a `total_questions`. Se usa para calcular ER = `incorrect_answers / total_questions`. A mayor ER, peor el desempeno; ER alto penaliza directamente el SPS compuesto.
-
----
-
-**`interaction_events`** · `int >= 0` · Requerido
-
-Cantidad de interacciones que el paciente realizo efectivamente durante la sesion (por ejemplo: agarrar objetos, activar elementos, completar acciones en el entorno VR). Se compara contra `expected_interactions` para calcular ATS (Attention Score), que mide el nivel de participacion activa del paciente.
-
----
-
-**`expected_interactions`** · `int >= 0` · Requerido
-
-Cantidad de interacciones que se esperaba que el paciente realizara segun el diseno de la sesion VR. Actua como denominador en el calculo de ATS = `interaction_events / expected_interactions`. Si se envia 0, ATS se fija en 0. Un valor de ATS cercano a 1.0 indica que el paciente participo activamente; valores bajos sugieren desconexion o dificultad para interactuar con el entorno.
-
----
-
-### Resumen de como se usan los parametros
-
-| Parametro(s) | Metrica calculada | Formula |
+| Parametro(s) | Metrica | Formula |
 |---|---|---|
-| `correct_objects` / `total_objects` | ORS | `correct_objects / total_objects` |
+| `correct_key_objects`, `correct_secondary_objects`, `incorrect_objects`, `total_key_objects`, `total_secondary_objects` | ORS | `((correct_key*2) + (correct_secondary*1) - (incorrect*1)) / ((total_key*2) + (total_secondary*1))` |
 | `correct_events` / `total_events` | ERS | `correct_events / total_events` |
 | `comprehension_score` | SCS | `comprehension_score / 2` |
 | `response_times` | RTA | `mean(response_times)` |
 | `interaction_events` / `expected_interactions` | ATS | `interaction_events / expected_interactions` |
 | `incorrect_answers` / `total_questions` | ER | `incorrect_answers / total_questions` |
-| ORS, ERS, SCS, ER | SPS | `0.3·ORS + 0.3·ERS + 0.2·SCS + 0.2·(1−ER)` |
+| ORS, ERS, SCS, ER | SPS | `0.3*ORS + 0.3*ERS + 0.2*SCS + 0.2*(1-ER)` |
+
+> **Nota sobre ORS**: la nueva formula pondera doble los objetos clave sobre los secundarios y resta los objetos incorrectamente identificados. Puede tomar valores negativos cuando los errores superan los aciertos ponderados.
 
 ### Response
 
 ```json
 {
   "metrics": {
-    "ors": 0.7,
+    "ors": 0.667,
     "ers": 0.8,
     "scs": 1.0,
-    "rta": 2.4667,
+    "rta": 2.19,
     "ats": 0.8,
     "er": 0.2,
-    "sps": 0.81
+    "sps": 0.8
   },
-  "prediction": "high",
-  "recommendation": "increase_difficulty",
+  "cognitive_level": "high",
+  "recommendation": "maintain_difficulty",
+  "probabilities": {
+    "decrease_difficulty": 0.000,
+    "maintain_difficulty": 0.992,
+    "increase_difficulty": 0.008
+  },
   "context": {
-    "baseline_sps": 0.62,
-    "trend": "improving",
-    "delta_sps": 0.19,
-    "session_count": 7,
+    "baseline_sps": 0.582,
+    "slope_sps": -0.05,
+    "delta_sps": 0.218,
+    "mean_ors": 0.65,
+    "mean_ers": 0.55,
+    "mean_er": 0.25,
+    "mean_rta": 2.333,
+    "std_sps": 0.041,
+    "session_count": 3,
     "cold_start": false
   }
 }
 ```
 
-El campo `context` expone el razonamiento del motor de personalizacion: permite que Unity o el terapeuta vean por que se recomendo un ajuste especifico.
-
-### Metricas cognitivas calculadas
-
-| Metrica | Nombre | Formula |
-|---|---|---|
-| ORS | Object Recall Score | `correct_objects / total_objects` |
-| ERS | Event Recall Score | `correct_events / total_events` |
-| SCS | Story Comprehension Score | `comprehension_score / 2` |
-| RTA | Response Time Average | `mean(response_times)` |
-| ATS | Attention Score | `interaction_events / expected_interactions` |
-| ER | Error Rate | `incorrect_answers / total_questions` |
-| SPS | Session Performance Score | `0.3*ORS + 0.3*ERS + 0.2*SCS + 0.2*(1-ER)` |
-
-### Recomendacion de dificultad personalizada
-
-El microservicio utiliza una arquitectura hibrida de dos capas:
-
-**Capa 1 — Clasificacion SVM (stateless):** clasifica el rendimiento de la sesion actual en `low`, `medium` o `high`.
-
-**Capa 2 — Motor de personalizacion clinica (stateful):** ajusta la recomendacion segun el historial longitudinal del paciente (ultimas 10 sesiones).
-
-| Condicion evaluada | Recomendacion resultante |
+| Campo | Descripcion |
 |---|---|
-| Sin historial previo (primera sesion) | Regla base por SPS |
-| `delta_sps < -0.15` vs baseline personal | `decrease_difficulty` |
-| Tendencia `declining` y base pedia `increase` | `maintain_difficulty` |
-| Tendencia `improving` + SPS > 0.6 + base pedia `maintain` | `increase_difficulty` |
-| Cualquier otro caso | Regla base: SPS < 0.4 → decrease, 0.4-0.7 → maintain, > 0.7 → increase |
+| `metrics` | Las 7 metricas cognitivas calculadas para la sesion actual |
+| `cognitive_level` | Nivel cognitivo derivado deterministicamente del SPS (`<0.4` low, `0.4-0.7` medium, `>0.7` high). Informativo |
+| `recommendation` | Recomendacion de dificultad producida por el ML stateful |
+| `probabilities` | Confianza del modelo en cada clase (suma 1.0). Permite trazabilidad clinica |
+| `context` | Las 9 features de historial que el ML consumio + flag `cold_start` |
 
-### Mock Requests para Testing
+### Las 16 features del modelo
 
-Cuatro casos representativos que cubren los tres niveles de clasificacion. Todos corresponden a primera sesion del paciente (`cold_start: true`), por lo que la recomendacion usa la regla base de SPS.
+El modelo SVM stateful consume un vector de 16 features:
 
----
+| # | Feature | Origen |
+|---|---------|--------|
+| 1-7 | ORS, ERS, SCS, RTA, ATS, ER, SPS | Sesion actual |
+| 8 | `baseline_sps` | Media movil ponderada del SPS sobre las ultimas 10 sesiones |
+| 9 | `slope_sps` | Pendiente lineal del SPS (positivo = mejora, negativo = declive) |
+| 10 | `delta_sps` | `SPS_actual - baseline_sps` |
+| 11-14 | `mean_ors`, `mean_ers`, `mean_er`, `mean_rta` | Promedios historicos |
+| 15 | `std_sps` | Desviacion estandar del SPS historico |
+| 16 | `session_count` | Numero de sesiones previas (0 en cold start) |
 
-**Caso 1 — Rendimiento alto** (`SPS ≈ 0.89` → `high` → `increase_difficulty`)
+En **cold start** (primera sesion del paciente), las features de historial se neutralizan: `baseline_sps = SPS_actual`, `slope=0`, `delta=0`, `std=0`, `mean_*` igualan los valores actuales, `session_count=0`.
+
+### Trazabilidad clinica
+
+Cada inferencia persiste en `schema_telemetria.metricas_sesion`:
+- Las metricas raw enviadas
+- Las 7 metricas cognitivas calculadas
+- Las 9 features de historial usadas como entrada al modelo
+- La recomendacion del modelo y las 3 probabilidades por clase
+- El `cognitive_level` derivado del SPS
+
+Cualquier prediccion puede reconstruirse y explicarse a partir de la base de datos sin necesidad de un motor de reglas externo.
+
+### Mock requests para testing
+
+**Caso 1 — Rendimiento alto, cold start** (esperado: `cognitive_level: high`, recomendacion conservadora `maintain` o `increase` segun el modelo)
 
 ```bash
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
   -d '{
     "patient_id": 101,
-    "total_objects": 10,
-    "correct_objects": 9,
+    "correct_key_objects": 5,
+    "correct_secondary_objects": 4,
+    "incorrect_objects": 0,
+    "total_key_objects": 5,
+    "total_secondary_objects": 5,
     "total_events": 10,
     "correct_events": 8,
     "comprehension_score": 2,
-    "response_times": [1.5, 2.0, 1.8, 1.6],
+    "response_times": [1.5, 2.0, 1.8, 1.6, 1.7, 1.9, 1.5, 2.1],
     "total_questions": 10,
     "incorrect_answers": 1,
     "interaction_events": 9,
@@ -256,31 +200,22 @@ curl -X POST http://localhost:8000/predict \
   }'
 ```
 
-Respuesta esperada:
-```json
-{
-  "metrics": { "ors": 0.9, "ers": 0.8, "scs": 1.0, "rta": 1.725, "ats": 0.9, "er": 0.1, "sps": 0.89 },
-  "prediction": "high",
-  "recommendation": "increase_difficulty",
-  "context": { "baseline_sps": 0.89, "trend": "cold_start", "delta_sps": 0.0, "session_count": 0, "cold_start": true }
-}
-```
-
----
-
-**Caso 2 — Rendimiento medio** (`SPS ≈ 0.57` → `medium` → `maintain_difficulty`)
+**Caso 2 — Rendimiento medio, cold start** (esperado: `cognitive_level: medium`)
 
 ```bash
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
   -d '{
     "patient_id": 102,
-    "total_objects": 10,
-    "correct_objects": 6,
+    "correct_key_objects": 3,
+    "correct_secondary_objects": 3,
+    "incorrect_objects": 1,
+    "total_key_objects": 5,
+    "total_secondary_objects": 5,
     "total_events": 10,
     "correct_events": 5,
     "comprehension_score": 1,
-    "response_times": [3.5, 4.2, 3.8, 4.5],
+    "response_times": [3.5, 4.2, 3.8, 4.5, 4.0, 3.9],
     "total_questions": 10,
     "incorrect_answers": 3,
     "interaction_events": 6,
@@ -288,31 +223,22 @@ curl -X POST http://localhost:8000/predict \
   }'
 ```
 
-Respuesta esperada:
-```json
-{
-  "metrics": { "ors": 0.6, "ers": 0.5, "scs": 0.5, "rta": 4.0, "ats": 0.6, "er": 0.3, "sps": 0.57 },
-  "prediction": "medium",
-  "recommendation": "maintain_difficulty",
-  "context": { "baseline_sps": 0.57, "trend": "cold_start", "delta_sps": 0.0, "session_count": 0, "cold_start": true }
-}
-```
-
----
-
-**Caso 3 — Rendimiento bajo** (`SPS ≈ 0.16` → `low` → `decrease_difficulty`)
+**Caso 3 — Rendimiento bajo, cold start** (esperado: `cognitive_level: low`, recomendacion `decrease`)
 
 ```bash
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
   -d '{
     "patient_id": 103,
-    "total_objects": 10,
-    "correct_objects": 2,
+    "correct_key_objects": 1,
+    "correct_secondary_objects": 1,
+    "incorrect_objects": 3,
+    "total_key_objects": 5,
+    "total_secondary_objects": 5,
     "total_events": 10,
     "correct_events": 2,
     "comprehension_score": 0,
-    "response_times": [6.0, 7.5, 8.0, 6.8],
+    "response_times": [6.0, 7.5, 8.0, 6.8, 7.2, 6.5],
     "total_questions": 10,
     "incorrect_answers": 8,
     "interaction_events": 2,
@@ -320,71 +246,7 @@ curl -X POST http://localhost:8000/predict \
   }'
 ```
 
-Respuesta esperada:
-```json
-{
-  "metrics": { "ors": 0.2, "ers": 0.2, "scs": 0.0, "rta": 7.075, "ats": 0.2, "er": 0.8, "sps": 0.16 },
-  "prediction": "low",
-  "recommendation": "decrease_difficulty",
-  "context": { "baseline_sps": 0.16, "trend": "cold_start", "delta_sps": 0.0, "session_count": 0, "cold_start": true }
-}
-```
-
----
-
-**Caso 4 — Limite medio-alto** (`SPS ≈ 0.78` → `high` → `increase_difficulty`)
-
-Util para verificar que el modelo clasifica correctamente en el borde entre `medium` y `high`.
-
-```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "patient_id": 104,
-    "total_objects": 10,
-    "correct_objects": 7,
-    "total_events": 10,
-    "correct_events": 7,
-    "comprehension_score": 2,
-    "response_times": [2.5, 3.0, 2.8],
-    "total_questions": 10,
-    "incorrect_answers": 2,
-    "interaction_events": 7,
-    "expected_interactions": 10
-  }'
-```
-
-Respuesta esperada:
-```json
-{
-  "metrics": { "ors": 0.7, "ers": 0.7, "scs": 1.0, "rta": 2.767, "ats": 0.7, "er": 0.2, "sps": 0.78 },
-  "prediction": "high",
-  "recommendation": "increase_difficulty",
-  "context": { "baseline_sps": 0.78, "trend": "cold_start", "delta_sps": 0.0, "session_count": 0, "cold_start": true }
-}
-```
-
-> Para observar la personalizacion en accion, enviar multiples requests con el mismo `patient_id` en orden. A partir del segundo request, `cold_start` sera `false` y el motor ajustara la recomendacion segun el historial acumulado.
-
-### Ejemplo con curl
-
-```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "patient_id": 1,
-    "total_objects": 10,
-    "correct_objects": 7,
-    "total_events": 5,
-    "correct_events": 4,
-    "comprehension_score": 2,
-    "response_times": [2.1, 3.5, 1.8],
-    "total_questions": 10,
-    "incorrect_answers": 2,
-    "interaction_events": 8,
-    "expected_interactions": 10
-  }'
-```
+> Para observar la influencia del historial, enviar multiples requests con el mismo `patient_id` simulando una trayectoria temporal. A partir del segundo request `cold_start` sera `false` y las features de historial se calcularan con sesiones reales, modulando la recomendacion del modelo.
 
 ### Ejemplo en Unity (C#)
 
@@ -398,8 +260,11 @@ using System.Collections;
 public class SessionInput
 {
     public int patient_id;
-    public int total_objects;
-    public int correct_objects;
+    public int correct_key_objects;
+    public int correct_secondary_objects;
+    public int incorrect_objects;
+    public int total_key_objects;
+    public int total_secondary_objects;
     public int total_events;
     public int correct_events;
     public int comprehension_score;
@@ -423,11 +288,24 @@ public class SessionMetrics
 }
 
 [System.Serializable]
+public class Probabilities
+{
+    public float decrease_difficulty;
+    public float maintain_difficulty;
+    public float increase_difficulty;
+}
+
+[System.Serializable]
 public class PatientContext
 {
     public float baseline_sps;
-    public string trend;
+    public float slope_sps;
     public float delta_sps;
+    public float mean_ors;
+    public float mean_ers;
+    public float mean_er;
+    public float mean_rta;
+    public float std_sps;
     public int session_count;
     public bool cold_start;
 }
@@ -436,8 +314,9 @@ public class PatientContext
 public class PredictionResponse
 {
     public SessionMetrics metrics;
-    public string prediction;
+    public string cognitive_level;
     public string recommendation;
+    public Probabilities probabilities;
     public PatientContext context;
 }
 
@@ -462,10 +341,12 @@ public class CognitiveAPI : MonoBehaviour
             var response = JsonUtility.FromJson<PredictionResponse>(
                 request.downloadHandler.text
             );
-            Debug.Log($"Prediction: {response.prediction}");
             Debug.Log($"Recommendation: {response.recommendation}");
+            Debug.Log($"Cognitive level: {response.cognitive_level}");
             Debug.Log($"SPS: {response.metrics.sps}");
-            Debug.Log($"Trend: {response.context.trend}");
+            Debug.Log($"Confidence: dec={response.probabilities.decrease_difficulty} " +
+                      $"maint={response.probabilities.maintain_difficulty} " +
+                      $"inc={response.probabilities.increase_difficulty}");
             Debug.Log($"Sessions tracked: {response.context.session_count}");
         }
         else
@@ -492,8 +373,8 @@ ml_microservice/
 ├── .env                             # Credenciales de base de datos (no versionado)
 │
 ├── domain/                          # Tipos de dominio puros, sin dependencias de framework
-│   ├── session_metrics.py           # RawSessionData, SessionMetrics, CognitiveLevel
-│   ├── patient_context.py           # HistoricalSession, PatientContext, TrendType
+│   ├── session_metrics.py           # RawSessionData, SessionMetrics, CognitiveLevel, cognitive_level_from_sps
+│   ├── patient_context.py           # HistoricalSession, PatientContext, feature_vector (16 features)
 │   └── difficulty_recommendation.py # DifficultyRecommendation enum
 │
 ├── app/                             # Orquestacion CQRS
@@ -505,8 +386,7 @@ ml_microservice/
 ├── infrastructure/                  # Adaptadores tecnicos
 │   ├── config.py                    # Paths, settings, HISTORY_WINDOW
 │   ├── ml/
-│   │   ├── onnx_classifier.py       # Wrapper SVM ONNX + scaler
-│   │   └── personalization_engine.py# Motor de reglas clinicas de personalizacion
+│   │   └── onnx_classifier.py       # Wrapper SVM stateful ONNX + scaler (label + probs)
 │   └── persistence/
 │       ├── postgres_pool.py         # Pool asyncpg + DDL
 │       └── session_repository.py    # insert_session, get_patient_history
@@ -516,20 +396,21 @@ ml_microservice/
 │       ├── api.py                   # FastAPI app + lifespan + endpoint /predict
 │       └── schemas.py               # Pydantic DTOs de entrada y salida
 │
-└── misc/                            # Artefactos de ML y herramientas de entrenamiento
+└── misc/                            # Artefactos de ML y herramientas
+    ├── generate_dataset.py          # Generador de dataset sintetico longitudinal
     ├── train.py                     # Script de entrenamiento y exportacion a ONNX
     ├── model.onnx                   # Modelo SVM exportado (generado por train.py)
     ├── scaler.joblib                # StandardScaler ajustado (generado por train.py)
     └── dataset/
-        └── synthetic_vr_dataset.csv # Dataset de entrenamiento
+        └── synthetic_vr_dataset.csv # Dataset de entrenamiento (generado por generate_dataset.py)
 ```
 
 ## Tecnologias
 
 - **FastAPI** — Framework web asincrono
 - **ONNX Runtime** — Inferencia del modelo SVM
-- **scikit-learn** — Entrenamiento del modelo SVM
-- **skl2onnx** — Conversion de sklearn a ONNX
+- **scikit-learn** — Entrenamiento del modelo SVM (con `probability=True`)
+- **skl2onnx** — Conversion de sklearn a ONNX (con `zipmap=False` para exponer probabilidades)
 - **asyncpg** — Cliente asincrono para PostgreSQL
 - **Pydantic** — Validacion de datos de entrada/salida
 - **python-dotenv** — Carga de variables de entorno
@@ -537,4 +418,12 @@ ml_microservice/
 
 ## Base de datos
 
-El microservicio persiste cada sesion en el esquema `schema_telemetria` de PostgreSQL (TimescaleDB). La tabla `metricas_sesion` se crea automaticamente al iniciar el servidor e incluye las 7 metricas cognitivas, la prediccion, la recomendacion, y el contexto de personalizacion usado (`baseline_sps`, `trend`, `delta_sps`, `session_count`). Ver `infrastructure/persistence/postgres_pool.py` para el DDL completo.
+El microservicio persiste cada sesion en el esquema `schema_telemetria` de PostgreSQL (TimescaleDB). La tabla `metricas_sesion` se crea automaticamente al iniciar el servidor e incluye:
+
+- Datos raw enviados (incluyendo objetos clave/secundario/incorrectos)
+- Las 7 metricas cognitivas calculadas
+- Las 9 features de historial que el ML consumio (`baseline_sps`, `slope_sps`, `delta_sps`, `mean_ors`, `mean_ers`, `mean_er`, `mean_rta`, `std_sps`, `session_count`, `cold_start`)
+- La recomendacion del modelo y las 3 probabilidades por clase (`prob_decrease`, `prob_maintain`, `prob_increase`)
+- El `cognitive_level` derivado del SPS
+
+Esto garantiza trazabilidad clinica completa: cualquier decision del modelo es reconstruible y explicable a partir de la base de datos. Ver `infrastructure/persistence/postgres_pool.py` para el DDL completo.

@@ -1,4 +1,4 @@
-"""Query: fetch recent sessions of a patient to derive longitudinal context."""
+"""Query: fetch recent sessions of a patient to derive longitudinal context for the stateful ML."""
 
 from dataclasses import dataclass
 

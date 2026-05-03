@@ -13,12 +13,12 @@ from app.commands.predict_session import (
 from app.queries.get_patient_history import GetPatientHistoryHandler
 from infrastructure.config import MODEL_PATH, SCALER_PATH, DatabaseSettings
 from infrastructure.ml.onnx_classifier import OnnxClassifier
-from infrastructure.ml.personalization_engine import PersonalizationEngine
 from infrastructure.persistence.postgres_pool import close_pool, create_pool
 from infrastructure.persistence.session_repository import SessionRepository
 from interfaces.http.schemas import (
     PatientContextOut,
     PredictionResponse,
+    ProbabilitiesOut,
     SessionInput,
     SessionMetricsOut,
 )
@@ -38,7 +38,6 @@ async def lifespan(app: FastAPI):
     history_handler = GetPatientHistoryHandler(repository)
     predict_handler = PredictSessionHandler(
         classifier=classifier,
-        personalization=PersonalizationEngine(),
         repository=repository,
         history_handler=history_handler,
     )
@@ -55,10 +54,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Cognitive Performance API",
     description=(
-        "Microservice that predicts cognitive performance level and personalizes "
-        "difficulty adjustment for patients in a VR cognitive stimulation application."
+        "Microservice that recommends a personalized difficulty adjustment for patients in a "
+        "VR cognitive stimulation application using a stateful ML model that consumes both the "
+        "current-session metrics and the patient's longitudinal session history."
     ),
-    version="3.0.0",
+    version="4.0.0",
     lifespan=lifespan,
 )
 
@@ -84,12 +84,22 @@ async def predict(data: SessionInput):
 
     return PredictionResponse(
         metrics=SessionMetricsOut(**result.metrics.__dict__),
-        prediction=result.prediction.value,
-        recommendation=result.recommendation.value,
+        cognitive_level=result.cognitive_level.value,
+        recommendation=result.classification.recommendation.value,
+        probabilities=ProbabilitiesOut(
+            decrease_difficulty=result.classification.prob_decrease,
+            maintain_difficulty=result.classification.prob_maintain,
+            increase_difficulty=result.classification.prob_increase,
+        ),
         context=PatientContextOut(
             baseline_sps=result.context.baseline_sps,
-            trend=result.context.trend.value,
+            slope_sps=result.context.slope_sps,
             delta_sps=result.context.delta_sps,
+            mean_ors=result.context.mean_ors,
+            mean_ers=result.context.mean_ers,
+            mean_er=result.context.mean_er,
+            mean_rta=result.context.mean_rta,
+            std_sps=result.context.std_sps,
             session_count=result.context.session_count,
             cold_start=result.context.cold_start,
         ),

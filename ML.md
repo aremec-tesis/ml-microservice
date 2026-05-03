@@ -1,139 +1,114 @@
 # Machine Learning en el Microservicio de Rendimiento Cognitivo
 
-## Técnica utilizada
+## Tecnica utilizada
 
-Este microservicio implementa un **Support Vector Machine (SVM)** con kernel RBF (Radial Basis Function), un algoritmo de clasificación supervisada ampliamente validado en la literatura científica. El SVM fue seleccionado por su robustez ante espacios de features de baja dimensionalidad, su capacidad de generalización con datasets pequeños, y su interpretabilidad frente a alternativas de deep learning.
+Este microservicio implementa un **Support Vector Machine (SVM)** con kernel RBF (Radial Basis Function), un algoritmo de clasificacion supervisada ampliamente validado en la literatura cientifica. El SVM fue seleccionado por su robustez ante espacios de features de baja-media dimensionalidad, su capacidad de generalizacion con datasets pequenos, y su interpretabilidad frente a alternativas de deep learning.
 
-El modelo clasifica cada sesión VR en uno de tres niveles de rendimiento cognitivo: `low`, `medium` o `high`, a partir de 7 métricas calculadas en tiempo real desde los datos de la sesión.
+A diferencia de versiones anteriores, el modelo ahora es **stateful**: consume tanto las 7 metricas de la sesion actual como **9 features agregadas del historial longitudinal del paciente**, y predice directamente la **recomendacion de dificultad** (decrease / maintain / increase). El motor de personalizacion clinica externo desaparece: su logica fue absorbida por el modelo, que la aprendio del dataset etiquetado con esas mismas reglas.
 
 ## Pipeline de inferencia
 
 ```
-Sesión VR (Unity)
-       │
-       ▼
-Validación Pydantic              ←  interfaces/http/schemas.py (SessionInput)
-       │
-       ▼
-Lectura de historial del paciente ←  app/queries/get_patient_history.py
-                                     → infrastructure/persistence/session_repository.py
-       │
-       ▼
-Cálculo de métricas cognitivas   ←  domain/session_metrics.py (SessionMetrics.from_raw)
+Sesion VR (Unity)
+       |
+       v
+Validacion Pydantic              <-  interfaces/http/schemas.py (SessionInput)
+       |
+       v
+Lectura de historial del paciente <-  app/queries/get_patient_history.py
+                                     -> infrastructure/persistence/session_repository.py
+       |
+       v
+Calculo de metricas cognitivas   <-  domain/session_metrics.py (SessionMetrics.from_raw)
   [ORS, ERS, SCS, RTA, ATS, ER, SPS]
-       │
-       ▼
-Contexto longitudinal             ←  domain/patient_context.py (PatientContext.from_history)
-  (baseline + tendencia + delta)
-       │
-       ▼
-Normalización (StandardScaler)    ←  scaler.joblib
-       │
-       ▼
-Inferencia SVM (ONNX Runtime)     ←  infrastructure/ml/onnx_classifier.py
-       │                               └─→  Clasificación: low / medium / high
-       ▼
-Motor de personalización clínica  ←  infrastructure/ml/personalization_engine.py
-                                     reglas interpretables + contexto del paciente
-       │
-       ▼
-Recomendación personalizada       →  increase / maintain / decrease
-       │
-       ▼
-Persistencia de sesión            ←  infrastructure/persistence/session_repository.py
-  (incluye contexto usado)            insert con baseline_sps, trend, delta_sps, session_count
-       │
-       ▼
-Respuesta JSON                    →  POST /predict
-  (metrics + prediction + recommendation + context)
+       |
+       v
+Contexto longitudinal             <-  domain/patient_context.py (PatientContext.from_history)
+  [baseline_sps, slope_sps, delta_sps, mean_ors, mean_ers, mean_er, mean_rta, std_sps, session_count]
+       |
+       v
+Feature vector (16 features)      <-  domain/patient_context.feature_vector
+       |
+       v
+Normalizacion (StandardScaler)    <-  scaler.joblib
+       |
+       v
+Inferencia SVM stateful (ONNX)    <-  infrastructure/ml/onnx_classifier.py
+       |                               +-> Recomendacion: decrease / maintain / increase
+       |                               +-> Probabilidades por clase (trazabilidad clinica)
+       v
+Cognitive level derivado del SPS  <-  domain/session_metrics.cognitive_level_from_sps
+  (informacion clinica para el terapeuta, no afecta al ML)
+       |
+       v
+Persistencia de sesion            <-  infrastructure/persistence/session_repository.py
+  (raw + metricas + 16 features usadas + recomendacion + probabilidades + cognitive_level)
+       |
+       v
+Respuesta JSON                    ->  POST /predict
+  (metrics + cognitive_level + recommendation + probabilities + context)
 ```
 
-Toda la orquestación vive en `app/commands/predict_session.py` (comando CQRS) para que la capa HTTP sea delgada y el flujo sea trivialmente testeable sin FastAPI.
+Toda la orquestacion vive en `app/commands/predict_session.py` (comando CQRS) para que la capa HTTP sea delgada y el flujo sea trivialmente testeable sin FastAPI.
 
-El modelo se entrena **una sola vez** con el script `train.py`, se exporta al formato estándar ONNX, y en producción el microservicio lo carga en memoria para inferencia eficiente sin dependencia de scikit-learn.
+El modelo se entrena **una sola vez** con el script `misc/train.py`, se exporta al formato estandar ONNX, y en produccion el microservicio lo carga en memoria para inferencia eficiente sin dependencia de scikit-learn.
 
-## Enfoque híbrido — ML clasificatorio + motor de personalización clínica
+## Enfoque stateful con trazabilidad clinica
 
-La propuesta central del proyecto es el **ajuste de dificultad totalmente personalizado** para cada paciente. Para lograrlo de forma defendible y clínicamente interpretable, el microservicio adopta una arquitectura **híbrida de dos capas** dentro del endpoint `/predict`:
+El modelo recibe las 16 features y produce directamente la recomendacion de dificultad. Para mantener defensibilidad clinica sin un motor de reglas externo, el sistema:
 
-**Capa 1 — Clasificación ML (SVM objetivo)**
-El SVM clasifica el rendimiento cognitivo de la sesión actual (low / medium / high) usando exclusivamente las 7 métricas de esa sesión. Esta capa es **estateless y objetiva**: dos pacientes con el mismo desempeño en una sesión reciben la misma clasificación.
+1. **Persiste las 16 features de entrada** en cada inferencia (`schema_telemetria.metricas_sesion`), por lo que cualquier prediccion puede reconstruirse a partir de la base de datos.
+2. **Persiste las 3 probabilidades por clase** (`prob_decrease`, `prob_maintain`, `prob_increase`), permitiendo al terapeuta entender la confianza del modelo en cada decision (ej. "el modelo dio 0.78 a maintain vs 0.15 a increase").
+3. **El dataset sintetico fue etiquetado con reglas clinicas defendibles** (las mismas reglas que tenia el motor de personalizacion previo), por lo que el modelo aprendio a replicar esas reglas pero usando el espacio completo de features. Esto permite migrar progresivamente hacia datos clinicos reales sin reescribir la arquitectura.
 
-**Capa 2 — Motor de personalización clínica (stateful)**
-Sobre la clasificación del SVM, un motor de reglas interpretables combina la predicción con el **historial longitudinal del paciente** recuperado de la base de datos TimescaleDB para producir una recomendación de dificultad **personalizada a la trayectoria individual** del paciente. El motor considera:
+## Las 16 features del modelo
 
-- **Baseline del paciente**: media móvil ponderada del SPS sobre las últimas N sesiones
-- **Tendencia**: pendiente de SPS sobre la ventana de historial → `improving` / `stable` / `declining`
-- **Delta relativo**: diferencia entre el SPS actual y el baseline personal del paciente
-- **Número de sesiones previas**: modula cuánta influencia tiene el historial (cold-start)
+| # | Feature | Origen | Descripcion |
+|---|---------|--------|-------------|
+| 1 | ORS | Sesion actual | Object Recall Score con nueva formula clave/secundario |
+| 2 | ERS | Sesion actual | Event Recall Score |
+| 3 | SCS | Sesion actual | Semantic Comprehension Score |
+| 4 | RTA | Sesion actual | Response Time Average (segundos) |
+| 5 | ATS | Sesion actual | Attention Score |
+| 6 | ER | Sesion actual | Error Rate |
+| 7 | SPS | Sesion actual | Session Performance Score (compuesto) |
+| 8 | baseline_sps | Historial | Media movil ponderada del SPS sobre las ultimas 10 sesiones |
+| 9 | slope_sps | Historial | Pendiente lineal del SPS (positivo = mejora, negativo = declive) |
+| 10 | delta_sps | Historial | SPS_actual - baseline_sps |
+| 11 | mean_ors | Historial | Promedio del ORS historico |
+| 12 | mean_ers | Historial | Promedio del ERS historico |
+| 13 | mean_er | Historial | Promedio del ER historico |
+| 14 | mean_rta | Historial | Promedio del RTA historico |
+| 15 | std_sps | Historial | Desviacion estandar del SPS historico (volatilidad) |
+| 16 | session_count | Historial | Numero de sesiones previas usadas (0 en cold start) |
 
-Esta separación garantiza que:
+En **cold start** (paciente sin historial), las features de historial se neutralizan: `baseline_sps = SPS_actual`, `slope_sps = 0`, `delta_sps = 0`, `std_sps = 0`, `mean_* = valores actuales`, `session_count = 0`. El modelo aprendio durante el entrenamiento que `session_count = 0` indica cold start y se comporta de forma conservadora en esos casos.
 
-1. **El modelo ML permanece puro, reentrenable y auditable** — su rol es clasificar, no personalizar.
-2. **La personalización es transparente y defendible clínicamente** — cada ajuste de dificultad puede trazarse a reglas interpretables basadas en literatura de neurorrehabilitación.
-3. **El sistema evoluciona de forma segura hacia datos reales** — cuando existan datos clínicos longitudinales, la capa de personalización puede migrar progresivamente hacia features del propio modelo ML sin reescribir el sistema.
+## Nueva formula de ORS
 
-En contextos clínicos, los sistemas híbridos ML + reglas interpretables son ampliamente preferidos frente a modelos caja-negra, precisamente porque un terapeuta debe poder entender **por qué** el sistema recomendó aumentar o disminuir la dificultad. Este enfoque híbrido no es una limitación del proyecto: es una decisión de diseño alineada con buenas prácticas de IA aplicada a la salud.
-
-### Reglas concretas del motor de personalización
-
-| Condición | Ajuste aplicado |
-|---|---|
-| Paciente sin historial (cold start) | Regla base SPS sin personalización |
-| `delta_sps < -0.15` respecto al baseline | `decrease_difficulty` (caída significativa) |
-| Tendencia `declining` y regla base pedía `increase` | Se fuerza `maintain_difficulty` (no presionar) |
-| Tendencia `improving` + regla base `maintain` + `SPS > 0.6` | Se fuerza `increase_difficulty` (premiar progreso) |
-| Cualquier otro caso | Regla base por SPS |
-
-Los umbrales están definidos como constantes documentadas en `infrastructure/ml/personalization_engine.py` y pueden calibrarse sin modificar la lógica.
-
-### Contenido de la respuesta del endpoint
-
-La respuesta incluye el contexto clínico usado, permitiendo que Unity o el terapeuta visualicen el razonamiento detrás de cada recomendación:
-
-```json
-{
-  "metrics": { "ors": 0.70, "ers": 0.80, "scs": 1.0, "rta": 2.46, "ats": 0.80, "er": 0.20, "sps": 0.81 },
-  "prediction": "high",
-  "recommendation": "increase_difficulty",
-  "context": {
-    "baseline_sps": 0.62,
-    "trend": "improving",
-    "delta_sps": 0.19,
-    "session_count": 7,
-    "cold_start": false
-  }
-}
+```
+ORS = ((correct_key * 2) + (correct_secondary * 1) - (incorrect * 1))
+      ────────────────────────────────────────────────────────────────
+                  (total_key * 2) + (total_secondary * 1)
 ```
 
-Esto convierte al sistema en una herramienta de apoyo clínico transparente: cada decisión queda trazada y auditada en la base de datos (`schema_telemetria.metricas_sesion` guarda el contexto usado en cada inferencia).
+A diferencia de la version previa (`correct / total`), esta formula:
+- **Pondera doble los objetos clave** sobre los secundarios, reflejando su importancia clinica/narrativa.
+- **Penaliza objetos incorrectamente identificados** (falsos positivos) restandolos del numerador.
+- **Puede ser negativa** cuando los errores superan los aciertos ponderados — el modelo y el scaler manejan rango ampliado sin problemas.
 
-## Features del modelo
+## Sobre el dataset sintetico
 
-| Feature | Descripción |
-|---|---|
-| ORS | Ratio de objetos reconocidos correctamente |
-| ERS | Ratio de eventos reconocidos correctamente |
-| SCS | Puntuación de comprensión semántica |
-| RTA | Tiempo de respuesta promedio (segundos) |
-| ATS | Ratio de interacciones realizadas vs esperadas |
-| ER | Tasa de error en respuestas |
-| SPS | Puntuación compuesta de desempeño de sesión |
+El dataset (`misc/dataset/synthetic_vr_dataset.csv`) es **longitudinal**: contiene multiples sesiones por paciente para que el modelo pueda aprender la influencia del historial sobre la recomendacion. Generador en `misc/generate_dataset.py`.
 
-## Sobre el dataset sintético
+- **500 pacientes**, cada uno con 5-20 sesiones (~6000 filas totales).
+- Por paciente, un **fenotipo cognitivo** (improving / stable / declining) define la trayectoria latente.
+- Por sesion, las 7 metricas se muestrean con coherencia respecto a la habilidad cognitiva del paciente en ese momento (drift + ruido).
+- Las 9 features de historial se calculan para cada sesion usando solo las sesiones previas reales del mismo paciente (no hay leakage temporal).
+- El target `Target_Recommendation` se etiqueta con reglas clinicas defendibles (umbrales de SPS + slope + delta), las mismas reglas del motor de personalizacion previo.
 
-El proyecto no cuenta con un dataset público de referencia porque **no existe uno**. El enfoque del proyecto es novedoso: la estimulación cognitiva guiada por realidad virtual con métricas de sesión como proxy de rendimiento cognitivo es una propuesta original de esta tesis, sin antecedentes directos en literatura con exactamente estas variables.
+El split train/test en `train.py` es **estratificado por paciente** para evitar que sesiones del mismo paciente aparezcan a ambos lados del split (data leakage).
 
-Ante esta situación, el equipo tomó una decisión técnicamente fundamentada: **construir un dataset sintético** (`dataset/synthetic_vr_dataset.csv`) con correlaciones realistas entre las métricas de sesión VR y el nivel de rendimiento cognitivo, apoyado en escalas clínicas establecidas como el MMSE (Mini-Mental State Examination).
+## Punto de distincion del proyecto
 
-Este enfoque es una práctica reconocida en investigación cuando el fenómeno de estudio es emergente y no dispone de datos históricos. Permite:
-
-- Validar la arquitectura del pipeline completo (desde Unity hasta el modelo)
-- Demostrar el funcionamiento end-to-end del sistema
-- Sentar la base para reemplazar los datos sintéticos por datos reales en fases clínicas posteriores del proyecto
-
-La columna `Target_Class` del dataset fue construida de forma coherente con los valores de las métricas, asegurando que el modelo aprenda patrones que reflejan el comportamiento clínico esperado.
-
-## Punto de distinción del proyecto
-
-El hecho de que no exista un dataset previo para este problema específico no es una limitación — es evidencia directa de la **novedad del aporte**. El proyecto define un nuevo conjunto de métricas cognitivas derivadas de sesiones VR, propone un pipeline de predicción automatizado, y genera los datos necesarios para validarlo. Esto representa una contribución metodológica independiente al dominio de la neurorrehabilitación asistida por tecnología.
+El hecho de que no exista un dataset previo para este problema especifico no es una limitacion — es evidencia directa de la **novedad del aporte**. El proyecto define un nuevo conjunto de metricas cognitivas derivadas de sesiones VR, propone un modelo stateful que personaliza por paciente sin necesidad de un motor de reglas externo, persiste cada decision con trazabilidad completa, y genera los datos necesarios para validarlo. Esto representa una contribucion metodologica independiente al dominio de la neurorrehabilitacion asistida por tecnologia.

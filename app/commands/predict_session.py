@@ -1,12 +1,12 @@
-"""Predict session command: orchestrates the full hybrid stateful prediction flow.
+"""Predict session command: orchestrates the full stateful prediction flow.
 
 Flow:
     1. Fetch patient history (query)
     2. Compute session metrics from raw input
-    3. Derive patient longitudinal context
-    4. Classify with SVM (ONNX)
-    5. Personalize difficulty recommendation using context
-    6. Persist session with computed context
+    3. Derive patient longitudinal context (9 aggregated features)
+    4. Build the 16-feature vector and run the stateful ML
+    5. Derive cognitive_level deterministically from SPS for therapist reporting
+    6. Persist session with full traceability (features + probabilities)
     7. Return rich result to the interface layer
 """
 
@@ -16,12 +16,15 @@ from app.queries.get_patient_history import (
     GetPatientHistoryHandler,
     GetPatientHistoryQuery,
 )
-from domain.difficulty_recommendation import DifficultyRecommendation
-from domain.patient_context import PatientContext
-from domain.session_metrics import CognitiveLevel, RawSessionData, SessionMetrics
+from domain.patient_context import PatientContext, feature_vector
+from domain.session_metrics import (
+    CognitiveLevel,
+    RawSessionData,
+    SessionMetrics,
+    cognitive_level_from_sps,
+)
 from infrastructure.config import HISTORY_WINDOW
-from infrastructure.ml.onnx_classifier import OnnxClassifier
-from infrastructure.ml.personalization_engine import PersonalizationEngine
+from infrastructure.ml.onnx_classifier import ClassificationResult, OnnxClassifier
 from infrastructure.persistence.session_repository import SessionRepository
 
 
@@ -33,21 +36,19 @@ class PredictSessionCommand:
 @dataclass(frozen=True)
 class PredictSessionResult:
     metrics: SessionMetrics
-    prediction: CognitiveLevel
-    recommendation: DifficultyRecommendation
     context: PatientContext
+    cognitive_level: CognitiveLevel
+    classification: ClassificationResult
 
 
 class PredictSessionHandler:
     def __init__(
         self,
         classifier: OnnxClassifier,
-        personalization: PersonalizationEngine,
         repository: SessionRepository,
         history_handler: GetPatientHistoryHandler,
     ) -> None:
         self._classifier = classifier
-        self._personalization = personalization
         self._repository = repository
         self._history_handler = history_handler
 
@@ -59,25 +60,22 @@ class PredictSessionHandler:
         )
 
         metrics = SessionMetrics.from_raw(raw)
-        context = PatientContext.from_history(history, current_sps=metrics.sps)
+        context = PatientContext.from_history(history, current=metrics)
+        cognitive_level = cognitive_level_from_sps(metrics.sps)
 
-        prediction = self._classifier.classify(metrics.as_feature_vector())
-        recommendation = self._personalization.recommend(
-            current_sps=metrics.sps,
-            context=context,
-        )
+        classification = self._classifier.classify(feature_vector(metrics, context))
 
         await self._repository.insert_session(
             raw=raw,
             metrics=metrics,
-            prediction=prediction,
-            recommendation=recommendation,
             context=context,
+            cognitive_level=cognitive_level,
+            classification=classification,
         )
 
         return PredictSessionResult(
             metrics=metrics,
-            prediction=prediction,
-            recommendation=recommendation,
             context=context,
+            cognitive_level=cognitive_level,
+            classification=classification,
         )

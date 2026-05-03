@@ -7,12 +7,15 @@
 ```json
 {
   "patient_id": 1,
-  "total_objects": 10,
-  "correct_objects": 7,
+  "correct_key_objects": 4,
+  "correct_secondary_objects": 5,
+  "incorrect_objects": 1,
+  "total_key_objects": 5,
+  "total_secondary_objects": 8,
   "total_events": 5,
   "correct_events": 4,
   "comprehension_score": 2,
-  "response_times": [2.1, 3.5, 1.8],
+  "response_times": [2.1, 3.5, 1.8, 2.0, 2.5, 1.9, 2.3, 2.1, 2.0, 1.7],
   "total_questions": 10,
   "incorrect_answers": 2,
   "interaction_events": 8,
@@ -26,25 +29,55 @@
 
 **`patient_id`** · `int` · Requerido
 
-Identificador numerico unico del paciente dentro del sistema. Se usa para recuperar el historial de sesiones anteriores y personalizar la recomendacion de dificultad. No se valida su existencia previa — si es la primera sesion del paciente, el sistema opera en modo cold start usando unicamente los datos de la sesion actual.
+Identificador numerico unico del paciente dentro del sistema. Se usa para recuperar el historial de sesiones anteriores (hasta 10 sesiones) que el modelo ML consume como features adicionales para producir una recomendacion personalizada. No se valida su existencia previa — si es la primera sesion del paciente, el sistema opera en modo cold start y las features de historial se neutralizan.
 
 ---
 
-**`total_objects`** · `int >= 0` · Requerido
+**`correct_key_objects`** · `int >= 0` · Requerido
 
-Cantidad total de objetos que fueron presentados al paciente durante la escena VR para que los memorice o reconozca. Actua como denominador en el calculo de ORS (Object Recall Score). Debe ser mayor que cero para que la metrica tenga valor; si se envia 0, ORS se fija en 0.
+Cantidad de objetos **clave** (alta importancia clinica/narrativa) que el paciente identifico o recordo correctamente. Pondera doble en el calculo de ORS. Debe ser menor o igual a `total_key_objects`.
 
 ---
 
-**`correct_objects`** · `int >= 0` · Requerido
+**`correct_secondary_objects`** · `int >= 0` · Requerido
 
-Cantidad de objetos que el paciente identifico o recordo correctamente al ser evaluado. Debe ser menor o igual a `total_objects`. Se usa junto con `total_objects` para calcular ORS = `correct_objects / total_objects`.
+Cantidad de objetos **secundarios** (importancia menor) que el paciente identifico o recordo correctamente. Pondera simple en el calculo de ORS. Debe ser menor o igual a `total_secondary_objects`.
+
+---
+
+**`incorrect_objects`** · `int >= 0` · Requerido
+
+Cantidad de objetos que el paciente identifico incorrectamente (errores de reconocimiento o falsos positivos). Resta directamente del numerador de ORS, penalizando el desempeno.
+
+---
+
+**`total_key_objects`** · `int >= 0` · Requerido
+
+Cantidad total de objetos **clave** que se evaluaron en la sesion. Pondera doble en el denominador de ORS. Si `total_key_objects + total_secondary_objects = 0`, ORS se fija en 0.
+
+---
+
+**`total_secondary_objects`** · `int >= 0` · Requerido
+
+Cantidad total de objetos **secundarios** que se evaluaron en la sesion. Pondera simple en el denominador de ORS.
+
+---
+
+**Calculo de ORS (Object Recall Score)**
+
+```
+ORS = ((correct_key_objects * 2) + (correct_secondary_objects * 1) - (incorrect_objects * 1))
+      ─────────────────────────────────────────────────────────────────────────────────────────
+                  (total_key_objects * 2) + (total_secondary_objects * 1)
+```
+
+ORS puede ser negativo cuando los errores superan los aciertos ponderados. El modelo y la persistencia soportan rango ampliado.
 
 ---
 
 **`total_events`** · `int >= 0` · Requerido
 
-Cantidad total de eventos narrativos que ocurrieron durante la sesion VR (acciones, situaciones o secuencias que el paciente debio observar y retener). Actua como denominador en el calculo de ERS (Event Recall Score). Si se envia 0, ERS se fija en 0.
+Cantidad total de eventos narrativos que ocurrieron durante la sesion VR. Actua como denominador en el calculo de ERS (Event Recall Score). Si se envia 0, ERS se fija en 0.
 
 ---
 
@@ -99,3 +132,38 @@ Cantidad de interacciones que el paciente realizo efectivamente durante la sesio
 Cantidad de interacciones que se esperaba que el paciente realizara segun el diseno de la sesion VR. Actua como denominador en el calculo de ATS = `interaction_events / expected_interactions`. Si se envia 0, ATS se fija en 0. Un valor de ATS cercano a 1.0 indica que el paciente participo activamente; valores bajos sugieren desconexion o dificultad para interactuar con el entorno.
 
 ---
+
+### Response
+
+```json
+{
+  "metrics": { "ors": 0.667, "ers": 0.800, "scs": 1.0, "rta": 2.190, "ats": 0.800, "er": 0.200, "sps": 0.800 },
+  "cognitive_level": "high",
+  "recommendation": "maintain_difficulty",
+  "probabilities": {
+    "decrease_difficulty": 0.000,
+    "maintain_difficulty": 0.992,
+    "increase_difficulty": 0.008
+  },
+  "context": {
+    "baseline_sps": 0.582,
+    "slope_sps": -0.05,
+    "delta_sps": 0.218,
+    "mean_ors": 0.65,
+    "mean_ers": 0.55,
+    "mean_er": 0.25,
+    "mean_rta": 2.333,
+    "std_sps": 0.041,
+    "session_count": 3,
+    "cold_start": false
+  }
+}
+```
+
+| Campo | Descripcion |
+|---|---|
+| `metrics` | Las 7 metricas cognitivas calculadas para la sesion actual |
+| `cognitive_level` | Nivel cognitivo de la sesion derivado deterministicamente del SPS (informativo para el terapeuta) |
+| `recommendation` | Recomendacion de dificultad producida por el ML stateful |
+| `probabilities` | Confianza del modelo en cada clase (suma 1.0). Permite trazabilidad clinica |
+| `context` | Las 9 features de historial que el ML consumio + flag `cold_start` |

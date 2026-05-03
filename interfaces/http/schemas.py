@@ -9,8 +9,11 @@ from domain.session_metrics import RawSessionData
 
 class SessionInput(BaseModel):
     patient_id: int
-    total_objects: int = Field(ge=0)
-    correct_objects: int = Field(ge=0)
+    correct_key_objects: int = Field(ge=0)
+    correct_secondary_objects: int = Field(ge=0)
+    incorrect_objects: int = Field(ge=0)
+    total_key_objects: int = Field(ge=0)
+    total_secondary_objects: int = Field(ge=0)
     total_events: int = Field(ge=0)
     correct_events: int = Field(ge=0)
     comprehension_score: int = Field(ge=0, le=2)
@@ -23,8 +26,11 @@ class SessionInput(BaseModel):
     def to_domain(self) -> RawSessionData:
         return RawSessionData(
             patient_id=self.patient_id,
-            total_objects=self.total_objects,
-            correct_objects=self.correct_objects,
+            correct_key_objects=self.correct_key_objects,
+            correct_secondary_objects=self.correct_secondary_objects,
+            incorrect_objects=self.incorrect_objects,
+            total_key_objects=self.total_key_objects,
+            total_secondary_objects=self.total_secondary_objects,
             total_events=self.total_events,
             correct_events=self.correct_events,
             comprehension_score=self.comprehension_score,
@@ -48,16 +54,28 @@ class SessionMetricsOut(BaseModel):
 
 class PatientContextOut(BaseModel):
     baseline_sps: float
-    trend: Literal["improving", "stable", "declining", "cold_start"]
+    slope_sps: float
     delta_sps: float
+    mean_ors: float
+    mean_ers: float
+    mean_er: float
+    mean_rta: float
+    std_sps: float
     session_count: int
     cold_start: bool
 
 
+class ProbabilitiesOut(BaseModel):
+    decrease_difficulty: float
+    maintain_difficulty: float
+    increase_difficulty: float
+
+
 class PredictionResponse(BaseModel):
     metrics: SessionMetricsOut
-    prediction: Literal["low", "medium", "high"]
+    cognitive_level: Literal["low", "medium", "high"]
     recommendation: Literal[
-        "increase_difficulty", "maintain_difficulty", "decrease_difficulty"
+        "decrease_difficulty", "maintain_difficulty", "increase_difficulty"
     ]
+    probabilities: ProbabilitiesOut
     context: PatientContextOut
