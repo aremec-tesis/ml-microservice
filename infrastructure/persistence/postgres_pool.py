@@ -59,10 +59,17 @@ CREATE TABLE IF NOT EXISTS schema_telemetria.metricas_sesion (
 
 
 async def create_pool(settings: DatabaseSettings) -> asyncpg.Pool:
-    # Python 3.14 on Windows has a bug where loop.create_connection fails to
-    # resolve hostnames via DNS. Pre-resolve to an IP to work around it.
+    # Pre-resolve to an IPv4 address. Two reasons:
+    #   1. Python 3.14 on Windows has a DNS bug in loop.create_connection.
+    #   2. Hosts like Render Free are IPv4-only outbound, so we must avoid
+    #      AAAA records (which getaddrinfo without family=AF_INET may prefer).
     try:
-        infos = socket.getaddrinfo(settings.host, settings.port, type=socket.SOCK_STREAM)
+        infos = socket.getaddrinfo(
+            settings.host,
+            settings.port,
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM,
+        )
         resolved_host = infos[0][4][0]
     except socket.gaierror:
         resolved_host = settings.host
