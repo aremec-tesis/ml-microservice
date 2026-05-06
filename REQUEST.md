@@ -22,9 +22,7 @@
   "comprehension_score": 2,
   "response_times": [2.1, 3.5, 1.8, 2.0, 2.5, 1.9, 2.3, 2.1, 2.0, 1.7],
   "total_questions": 10,
-  "incorrect_answers": 2,
-  "interaction_events": 8,
-  "expected_interactions": 10
+  "incorrect_answers": 2
 }
 ```
 
@@ -156,23 +154,11 @@ Cantidad de preguntas que el paciente respondio incorrectamente. Debe ser menor 
 
 ---
 
-**`interaction_events`** · `int >= 0` · Requerido
-
-Cantidad de interacciones que el paciente realizo efectivamente durante la sesion (por ejemplo: agarrar objetos, activar elementos, completar acciones en el entorno VR). Se compara contra `expected_interactions` para calcular ATS (Attention Score), que mide el nivel de participacion activa del paciente.
-
----
-
-**`expected_interactions`** · `int >= 0` · Requerido
-
-Cantidad de interacciones que se esperaba que el paciente realizara segun el diseno de la sesion VR. Actua como denominador en el calculo de ATS = `interaction_events / expected_interactions`. Si se envia 0, ATS se fija en 0. Un valor de ATS cercano a 1.0 indica que el paciente participo activamente; valores bajos sugieren desconexion o dificultad para interactuar con el entorno.
-
----
-
 ### Response
 
 ```json
 {
-  "metrics": { "ors": 0.667, "ers": 0.800, "scs": 1.0, "rta": 2.190, "ats": 0.800, "er": 0.200, "sps": 0.800 },
+  "metrics": { "ors": 0.667, "ers": 0.800, "scs": 1.0, "rta": 2.190, "er": 0.200, "sps": 0.800 },
   "cognitive_level": "high",
   "recommendation": "maintain_difficulty",
   "probabilities": {
@@ -197,7 +183,7 @@ Cantidad de interacciones que se esperaba que el paciente realizara segun el dis
 
 | Campo | Descripcion |
 |---|---|
-| `metrics` | Las 7 metricas cognitivas calculadas para la sesion actual |
+| `metrics` | Las 6 metricas cognitivas calculadas para la sesion actual |
 | `cognitive_level` | Nivel cognitivo de la sesion derivado deterministicamente del SPS (`low` / `medium` / `high`); se persiste y se devuelve como informacion clinica |
 | `recommendation` | Recomendacion de dificultad para la **proxima** sesion producida por el ML stateful |
 | `probabilities` | Confianza del modelo en cada clase (suma 1.0). Permite trazabilidad clinica |

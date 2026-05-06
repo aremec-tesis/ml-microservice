@@ -41,8 +41,6 @@ class RawSessionData:
     response_times: tuple[float, ...]
     total_questions: int
     incorrect_answers: int
-    interaction_events: int
-    expected_interactions: int
 
 
 @dataclass(frozen=True)
@@ -51,7 +49,6 @@ class SessionMetrics:
     ers: float
     scs: float
     rta: float
-    ats: float
     er: float
     sps: float
 
@@ -72,12 +69,7 @@ class SessionMetrics:
             if raw.response_times
             else 0.0
         )
-        ats = (
-            raw.interaction_events / raw.expected_interactions
-            if raw.expected_interactions
-            else 0.0
-        )
         er = raw.incorrect_answers / raw.total_questions if raw.total_questions else 0.0
         sps = 0.3 * ors + 0.3 * ers + 0.2 * scs + 0.2 * (1 - er)
 
-        return cls(ors=ors, ers=ers, scs=scs, rta=rta, ats=ats, er=er, sps=sps)
+        return cls(ors=ors, ers=ers, scs=scs, rta=rta, er=er, sps=sps)

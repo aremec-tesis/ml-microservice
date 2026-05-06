@@ -68,13 +68,12 @@ class PatientContext:
 
 
 def feature_vector(metrics: SessionMetrics, context: PatientContext) -> list[float]:
-    """The 16 features the stateful ML consumes, in canonical order."""
+    """The 15 features the stateful ML consumes, in canonical order."""
     return [
         metrics.ors,
         metrics.ers,
         metrics.scs,
         metrics.rta,
-        metrics.ats,
         metrics.er,
         metrics.sps,
         context.baseline_sps,

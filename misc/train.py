@@ -1,7 +1,7 @@
-"""Training script: fits a stateful SVM (16 features) on the longitudinal synthetic dataset.
+"""Training script: fits a stateful SVM (15 features) on the longitudinal synthetic dataset.
 
 Target: difficulty recommendation (decrease / maintain / increase). The model receives
-both the 7 current-session metrics and 9 historical-context features, so it consumes the
+both the 6 current-session metrics and 9 historical-context features, so it consumes the
 patient's longitudinal history as part of every inference.
 """
 
@@ -23,7 +23,7 @@ SCALER_PATH = BASE_DIR / "scaler.joblib"
 MODEL_PATH = BASE_DIR / "model.onnx"
 
 FEATURE_COLUMNS = [
-    "ORS", "ERS", "SCS", "RTA", "ATS", "ER", "SPS",
+    "ORS", "ERS", "SCS", "RTA", "ER", "SPS",
     "baseline_sps", "slope_sps", "delta_sps",
     "mean_ors", "mean_ers", "mean_er", "mean_rta",
     "std_sps", "session_count",

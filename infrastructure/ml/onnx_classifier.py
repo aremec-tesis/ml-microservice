@@ -1,4 +1,4 @@
-"""ONNX + scaler wrapper that classifies a 16-feature vector into a DifficultyRecommendation.
+"""ONNX + scaler wrapper that classifies a 15-feature vector into a DifficultyRecommendation.
 
 Returns both the predicted label and the per-class probabilities so the inference is
 traceable end-to-end (the probabilities are persisted alongside the prediction).

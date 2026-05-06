@@ -30,8 +30,6 @@ class SessionInput(BaseModel):
     response_times: list[float]
     total_questions: int = Field(ge=0)
     incorrect_answers: int = Field(ge=0)
-    interaction_events: int = Field(ge=0)
-    expected_interactions: int = Field(ge=0)
 
     def to_domain(self) -> RawSessionData:
         return RawSessionData(
@@ -52,8 +50,6 @@ class SessionInput(BaseModel):
             response_times=tuple(self.response_times),
             total_questions=self.total_questions,
             incorrect_answers=self.incorrect_answers,
-            interaction_events=self.interaction_events,
-            expected_interactions=self.expected_interactions,
         )
 
 
@@ -62,7 +58,6 @@ class SessionMetricsOut(BaseModel):
     ers: float
     scs: float
     rta: float
-    ats: float
     er: float
     sps: float
 

@@ -2,7 +2,7 @@
 
 Microservicio en Python con FastAPI que recomienda un ajuste de dificultad personalizado (`decrease` / `maintain` / `increase`) para pacientes con deterioro cognitivo a partir de metricas de sesion capturadas en una aplicacion de realidad virtual desarrollada en Unity.
 
-Utiliza un modelo SVM (Support Vector Machine) **stateful** entrenado con scikit-learn y exportado a formato ONNX. El modelo consume tanto las 7 metricas de la sesion actual como **9 features agregadas del historial longitudinal del paciente** (ultimas 10 sesiones), produciendo directamente la recomendacion de dificultad junto con probabilidades por clase para trazabilidad clinica. Ademas se reporta un `cognitive_level` (low/medium/high) derivado deterministicamente del SPS como informacion adicional para el terapeuta.
+Utiliza un modelo SVM (Support Vector Machine) **stateful** entrenado con scikit-learn y exportado a formato ONNX. El modelo consume tanto las 6 metricas de la sesion actual como **9 features agregadas del historial longitudinal del paciente** (ultimas 10 sesiones), produciendo directamente la recomendacion de dificultad junto con probabilidades por clase para trazabilidad clinica. Ademas se reporta un `cognitive_level` (low/medium/high) derivado deterministicamente del SPS como informacion adicional para el terapeuta.
 
 ## Requisitos
 
@@ -45,14 +45,14 @@ Antes de ejecutar el servidor por primera vez, generar el dataset sintetico long
 # 1. Generar dataset (~6000 sesiones para 500 pacientes con trayectorias longitudinales)
 python misc/generate_dataset.py
 
-# 2. Entrenar el modelo SVM stateful (16 features, target = recommendation)
+# 2. Entrenar el modelo SVM stateful (15 features, target = recommendation)
 python misc/train.py
 ```
 
 Esto genera:
 - `misc/dataset/synthetic_vr_dataset.csv` — Dataset de entrenamiento
 - `misc/model.onnx` — Modelo SVM stateful en formato ONNX (con `predict_proba`)
-- `misc/scaler.joblib` — StandardScaler ajustado a las 16 features
+- `misc/scaler.joblib` — StandardScaler ajustado a las 15 features
 
 ## Ejecucion
 
@@ -83,9 +83,7 @@ El servidor se inicia en `http://127.0.0.1:8000`. Al arrancar, carga el modelo O
   "comprehension_score": 2,
   "response_times": [2.1, 3.5, 1.8, 2.0, 2.5, 1.9, 2.3, 2.1, 2.0, 1.7],
   "total_questions": 10,
-  "incorrect_answers": 2,
-  "interaction_events": 8,
-  "expected_interactions": 10
+  "incorrect_answers": 2
 }
 ```
 
@@ -99,7 +97,6 @@ Para la descripcion detallada de cada parametro, ver [REQUEST.md](REQUEST.md).
 | `correct_events` / `total_events` | ERS | `correct_events / total_events` |
 | `comprehension_score` | SCS | `comprehension_score / 2` |
 | `response_times` | RTA | `mean(response_times)` |
-| `interaction_events` / `expected_interactions` | ATS | `interaction_events / expected_interactions` |
 | `incorrect_answers` / `total_questions` | ER | `incorrect_answers / total_questions` |
 | ORS, ERS, SCS, ER | SPS | `0.3*ORS + 0.3*ERS + 0.2*SCS + 0.2*(1-ER)` |
 
@@ -114,7 +111,6 @@ Para la descripcion detallada de cada parametro, ver [REQUEST.md](REQUEST.md).
     "ers": 0.8,
     "scs": 1.0,
     "rta": 2.19,
-    "ats": 0.8,
     "er": 0.2,
     "sps": 0.8
   },
@@ -142,25 +138,25 @@ Para la descripcion detallada de cada parametro, ver [REQUEST.md](REQUEST.md).
 
 | Campo | Descripcion |
 |---|---|
-| `metrics` | Las 7 metricas cognitivas calculadas para la sesion actual |
+| `metrics` | Las 6 metricas cognitivas calculadas para la sesion actual |
 | `cognitive_level` | Nivel cognitivo derivado deterministicamente del SPS (`<0.4` low, `0.4-0.7` medium, `>0.7` high). Informativo |
 | `recommendation` | Recomendacion de dificultad producida por el ML stateful |
 | `probabilities` | Confianza del modelo en cada clase (suma 1.0). Permite trazabilidad clinica |
 | `context` | Las 9 features de historial que el ML consumio + flag `cold_start` |
 
-### Las 16 features del modelo
+### Las 15 features del modelo
 
-El modelo SVM stateful consume un vector de 16 features:
+El modelo SVM stateful consume un vector de 15 features:
 
 | # | Feature | Origen |
 |---|---------|--------|
-| 1-7 | ORS, ERS, SCS, RTA, ATS, ER, SPS | Sesion actual |
-| 8 | `baseline_sps` | Media movil ponderada del SPS sobre las ultimas 10 sesiones |
-| 9 | `slope_sps` | Pendiente lineal del SPS (positivo = mejora, negativo = declive) |
-| 10 | `delta_sps` | `SPS_actual - baseline_sps` |
-| 11-14 | `mean_ors`, `mean_ers`, `mean_er`, `mean_rta` | Promedios historicos |
-| 15 | `std_sps` | Desviacion estandar del SPS historico |
-| 16 | `session_count` | Numero de sesiones previas (0 en cold start) |
+| 1-6 | ORS, ERS, SCS, RTA, ER, SPS | Sesion actual |
+| 7 | `baseline_sps` | Media movil ponderada del SPS sobre las ultimas 10 sesiones |
+| 8 | `slope_sps` | Pendiente lineal del SPS (positivo = mejora, negativo = declive) |
+| 9 | `delta_sps` | `SPS_actual - baseline_sps` |
+| 10-13 | `mean_ors`, `mean_ers`, `mean_er`, `mean_rta` | Promedios historicos |
+| 14 | `std_sps` | Desviacion estandar del SPS historico |
+| 15 | `session_count` | Numero de sesiones previas (0 en cold start) |
 
 En **cold start** (primera sesion del paciente), las features de historial se neutralizan: `baseline_sps = SPS_actual`, `slope=0`, `delta=0`, `std=0`, `mean_*` igualan los valores actuales, `session_count=0`.
 
@@ -168,7 +164,7 @@ En **cold start** (primera sesion del paciente), las features de historial se ne
 
 Cada inferencia persiste en `schema_telemetria.metricas_sesion`:
 - Las metricas raw enviadas
-- Las 7 metricas cognitivas calculadas
+- Las 6 metricas cognitivas calculadas
 - Las 9 features de historial usadas como entrada al modelo
 - La recomendacion del modelo y las 3 probabilidades por clase
 - El `cognitive_level` derivado del SPS
@@ -194,9 +190,7 @@ curl -X POST http://localhost:8000/predict \
     "comprehension_score": 2,
     "response_times": [1.5, 2.0, 1.8, 1.6, 1.7, 1.9, 1.5, 2.1],
     "total_questions": 10,
-    "incorrect_answers": 1,
-    "interaction_events": 9,
-    "expected_interactions": 10
+    "incorrect_answers": 1
   }'
 ```
 
@@ -217,9 +211,7 @@ curl -X POST http://localhost:8000/predict \
     "comprehension_score": 1,
     "response_times": [3.5, 4.2, 3.8, 4.5, 4.0, 3.9],
     "total_questions": 10,
-    "incorrect_answers": 3,
-    "interaction_events": 6,
-    "expected_interactions": 10
+    "incorrect_answers": 3
   }'
 ```
 
@@ -240,9 +232,7 @@ curl -X POST http://localhost:8000/predict \
     "comprehension_score": 0,
     "response_times": [6.0, 7.5, 8.0, 6.8, 7.2, 6.5],
     "total_questions": 10,
-    "incorrect_answers": 8,
-    "interaction_events": 2,
-    "expected_interactions": 10
+    "incorrect_answers": 8
   }'
 ```
 
@@ -271,8 +261,6 @@ public class SessionInput
     public float[] response_times;
     public int total_questions;
     public int incorrect_answers;
-    public int interaction_events;
-    public int expected_interactions;
 }
 
 [System.Serializable]
@@ -282,7 +270,6 @@ public class SessionMetrics
     public float ers;
     public float scs;
     public float rta;
-    public float ats;
     public float er;
     public float sps;
 }
@@ -374,7 +361,7 @@ ml_microservice/
 │
 ├── domain/                          # Tipos de dominio puros, sin dependencias de framework
 │   ├── session_metrics.py           # RawSessionData, SessionMetrics, CognitiveLevel, cognitive_level_from_sps
-│   ├── patient_context.py           # HistoricalSession, PatientContext, feature_vector (16 features)
+│   ├── patient_context.py           # HistoricalSession, PatientContext, feature_vector (15 features)
 │   └── difficulty_recommendation.py # DifficultyRecommendation enum
 │
 ├── app/                             # Orquestacion CQRS
@@ -421,7 +408,7 @@ ml_microservice/
 El microservicio persiste cada sesion en el esquema `schema_telemetria` de PostgreSQL (TimescaleDB). La tabla `metricas_sesion` se crea automaticamente al iniciar el servidor e incluye:
 
 - Datos raw enviados (incluyendo objetos clave/secundario/incorrectos)
-- Las 7 metricas cognitivas calculadas
+- Las 6 metricas cognitivas calculadas
 - Las 9 features de historial que el ML consumio (`baseline_sps`, `slope_sps`, `delta_sps`, `mean_ors`, `mean_ers`, `mean_er`, `mean_rta`, `std_sps`, `session_count`, `cold_start`)
 - La recomendacion del modelo y las 3 probabilidades por clase (`prob_decrease`, `prob_maintain`, `prob_increase`)
 - El `cognitive_level` derivado del SPS

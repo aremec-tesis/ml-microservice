@@ -4,7 +4,7 @@ Flow:
     1. Fetch patient history (query)
     2. Compute session metrics from raw input
     3. Derive patient longitudinal context (9 aggregated features)
-    4. Build the 16-feature vector and run the stateful ML
+    4. Build the 15-feature vector and run the stateful ML
     5. Derive cognitive_level deterministically from SPS for therapist reporting
     6. Persist session with full traceability (features + probabilities)
     7. Return rich result to the interface layer

@@ -35,15 +35,12 @@ CREATE TABLE IF NOT EXISTS telemetry.sessions (
     response_times REAL[] NOT NULL,
     total_questions INTEGER NOT NULL,
     incorrect_answers INTEGER NOT NULL,
-    interaction_events INTEGER NOT NULL,
-    expected_interactions INTEGER NOT NULL,
 
     -- Calculated Features (ML Features)
     ors NUMERIC(6,4) NOT NULL,
     ers NUMERIC(5,4) NOT NULL,
     scs NUMERIC(5,4) NOT NULL,
     rta NUMERIC(8,4) NOT NULL,
-    ats NUMERIC(6,4) NOT NULL,
     er  NUMERIC(5,4) NOT NULL,
     sps NUMERIC(6,4) NOT NULL,
 

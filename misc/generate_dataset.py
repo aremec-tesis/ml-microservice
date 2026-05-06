@@ -1,7 +1,7 @@
 """Synthetic longitudinal VR dataset generator.
 
 Produces multiple sessions per patient with coherent cognitive trajectories,
-the new ORS formula (key vs secondary objects), the 16-feature vector the
+the new ORS formula (key vs secondary objects), the 15-feature vector the
 stateful ML expects, and a clinically-defendable `recommendation` target
 (decrease / maintain / increase).
 
@@ -72,15 +72,6 @@ def _sample_session_raw(theta: float, rng: np.random.Generator) -> dict:
     total_events = int(rng.integers(3, 9))
     correct_events = int(rng.binomial(total_events, np.clip(theta, 0.05, 0.99)))
 
-    expected_interactions = int(rng.integers(5, 16))
-    interaction_events = int(
-        np.clip(
-            rng.binomial(expected_interactions, np.clip(theta * 0.95, 0.05, 0.99)),
-            0,
-            int(expected_interactions * 1.5),
-        )
-    )
-
     total_questions = int(rng.integers(5, 13))
     incorrect_answers = int(
         rng.binomial(total_questions, np.clip(1.0 - theta, 0.05, 0.95))
@@ -99,8 +90,6 @@ def _sample_session_raw(theta: float, rng: np.random.Generator) -> dict:
         "total_secondary_objects": total_secondary,
         "correct_events": correct_events,
         "total_events": total_events,
-        "expected_interactions": expected_interactions,
-        "interaction_events": interaction_events,
         "total_questions": total_questions,
         "incorrect_answers": incorrect_answers,
         "response_times": response_times.tolist(),
@@ -119,11 +108,6 @@ def _compute_metrics(raw: dict) -> dict:
     ers = raw["correct_events"] / raw["total_events"] if raw["total_events"] else 0.0
     scs = raw["comprehension_score"] / 2.0
     rta = float(np.mean(raw["response_times"])) if raw["response_times"] else 0.0
-    ats = (
-        raw["interaction_events"] / raw["expected_interactions"]
-        if raw["expected_interactions"]
-        else 0.0
-    )
     er = (
         raw["incorrect_answers"] / raw["total_questions"]
         if raw["total_questions"]
@@ -131,7 +115,7 @@ def _compute_metrics(raw: dict) -> dict:
     )
     sps = 0.3 * ors + 0.3 * ers + 0.2 * scs + 0.2 * (1 - er)
 
-    return {"ors": ors, "ers": ers, "scs": scs, "rta": rta, "ats": ats, "er": er, "sps": sps}
+    return {"ors": ors, "ers": ers, "scs": scs, "rta": rta, "er": er, "sps": sps}
 
 
 def _aggregate_history(history: list[dict], current: dict) -> dict:
@@ -245,8 +229,6 @@ def generate() -> pd.DataFrame:
                         "total_secondary_objects",
                         "correct_events",
                         "total_events",
-                        "expected_interactions",
-                        "interaction_events",
                         "total_questions",
                         "incorrect_answers",
                     )
@@ -256,7 +238,6 @@ def generate() -> pd.DataFrame:
                 "ERS": metrics["ers"],
                 "SCS": metrics["scs"],
                 "RTA": metrics["rta"],
-                "ATS": metrics["ats"],
                 "ER": metrics["er"],
                 "SPS": metrics["sps"],
                 "baseline_sps": ctx["baseline_sps"],
