@@ -8,7 +8,7 @@ from infrastructure.persistence.session_repository import SessionRepository
 
 @dataclass(frozen=True)
 class GetPatientHistoryQuery:
-    patient_id: int
+    patient_id: str
     limit: int
 
 

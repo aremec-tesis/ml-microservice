@@ -8,7 +8,17 @@ from domain.session_metrics import RawSessionData
 
 
 class SessionInput(BaseModel):
-    patient_id: int
+    # Identifiers
+    patient_id: str
+    user_id: str
+
+    # VR environment context
+    level: str
+    variation: str
+    difficulty: str
+    duration_min: int = Field(ge=0)
+
+    # Raw metrics from Unity
     correct_key_objects: int = Field(ge=0)
     correct_secondary_objects: int = Field(ge=0)
     incorrect_objects: int = Field(ge=0)
@@ -26,6 +36,11 @@ class SessionInput(BaseModel):
     def to_domain(self) -> RawSessionData:
         return RawSessionData(
             patient_id=self.patient_id,
+            user_id=self.user_id,
+            level=self.level,
+            variation=self.variation,
+            difficulty=self.difficulty,
+            duration_min=self.duration_min,
             correct_key_objects=self.correct_key_objects,
             correct_secondary_objects=self.correct_secondary_objects,
             incorrect_objects=self.incorrect_objects,

@@ -24,7 +24,12 @@ def cognitive_level_from_sps(sps: float) -> CognitiveLevel:
 
 @dataclass(frozen=True)
 class RawSessionData:
-    patient_id: int
+    patient_id: str
+    user_id: str
+    level: str
+    variation: str
+    difficulty: str
+    duration_min: int
     correct_key_objects: int
     correct_secondary_objects: int
     incorrect_objects: int

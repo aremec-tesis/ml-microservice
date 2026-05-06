@@ -7,13 +7,23 @@ import asyncpg
 from infrastructure.config import DatabaseSettings
 
 DDL = """
-CREATE SCHEMA IF NOT EXISTS schema_telemetria;
+CREATE SCHEMA IF NOT EXISTS telemetry;
 
-CREATE TABLE IF NOT EXISTS schema_telemetria.metricas_sesion (
+CREATE TABLE IF NOT EXISTS telemetry.sessions (
+    -- Identifiers and Clinical Relations
     id BIGSERIAL,
-    patient_id INTEGER NOT NULL,
+    patient_id UUID NOT NULL REFERENCES clinical.patients(id) ON DELETE RESTRICT,
+    user_id UUID NOT NULL REFERENCES clinical.users(id),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    date DATE NOT NULL DEFAULT CURRENT_DATE,
 
+    -- VR Environment Context
+    level telemetry.vr_level NOT NULL,
+    variation telemetry.narrative_variation NOT NULL,
+    difficulty telemetry.vr_difficulty NOT NULL,
+    duration_min SMALLINT NOT NULL DEFAULT 0,
+
+    -- Raw Metrics (Sent by Unity)
     correct_key_objects INTEGER NOT NULL,
     correct_secondary_objects INTEGER NOT NULL,
     incorrect_objects INTEGER NOT NULL,
@@ -28,6 +38,7 @@ CREATE TABLE IF NOT EXISTS schema_telemetria.metricas_sesion (
     interaction_events INTEGER NOT NULL,
     expected_interactions INTEGER NOT NULL,
 
+    -- Calculated Features (ML Features)
     ors NUMERIC(6,4) NOT NULL,
     ers NUMERIC(5,4) NOT NULL,
     scs NUMERIC(5,4) NOT NULL,
@@ -36,6 +47,7 @@ CREATE TABLE IF NOT EXISTS schema_telemetria.metricas_sesion (
     er  NUMERIC(5,4) NOT NULL,
     sps NUMERIC(6,4) NOT NULL,
 
+    -- Historical and Trend Data
     baseline_sps NUMERIC(6,4) NOT NULL,
     slope_sps NUMERIC(7,5) NOT NULL,
     delta_sps NUMERIC(6,4) NOT NULL,
@@ -47,8 +59,9 @@ CREATE TABLE IF NOT EXISTS schema_telemetria.metricas_sesion (
     session_count INTEGER NOT NULL,
     cold_start BOOLEAN NOT NULL,
 
-    cognitive_level VARCHAR(10) NOT NULL,
-    recommendation VARCHAR(25) NOT NULL,
+    -- Inference Results (SVM)
+    cognitive_level telemetry.cognitive_level NOT NULL,
+    recommendation telemetry.difficulty_recommendation NOT NULL,
     prob_decrease NUMERIC(5,4) NOT NULL,
     prob_maintain NUMERIC(5,4) NOT NULL,
     prob_increase NUMERIC(5,4) NOT NULL,

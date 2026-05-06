@@ -6,7 +6,12 @@
 
 ```json
 {
-  "patient_id": 1,
+  "patient_id": "11111111-1111-1111-1111-111111111111",
+  "user_id": "22222222-2222-2222-2222-222222222222",
+  "level": "level_1",
+  "variation": "standard",
+  "difficulty": "medium",
+  "duration_min": 12,
   "correct_key_objects": 4,
   "correct_secondary_objects": 5,
   "incorrect_objects": 1,
@@ -27,9 +32,39 @@
 
 ---
 
-**`patient_id`** · `int` · Requerido
+**`patient_id`** · `string (UUID)` · Requerido
 
-Identificador numerico unico del paciente dentro del sistema. Se usa para recuperar el historial de sesiones anteriores (hasta 10 sesiones) que el modelo ML consume como features adicionales para producir una recomendacion personalizada. No se valida su existencia previa — si es la primera sesion del paciente, el sistema opera en modo cold start y las features de historial se neutralizan.
+UUID del paciente registrado en `clinical.patients`. Se usa para recuperar el historial de sesiones anteriores (hasta 10 sesiones) que el modelo ML consume como features adicionales para producir una recomendacion personalizada. No se valida su existencia previa en este servicio — la integridad referencial la garantiza la FK en la tabla `telemetry.sessions`. Si es la primera sesion del paciente, el sistema opera en modo cold start y las features de historial se neutralizan.
+
+---
+
+**`user_id`** · `string (UUID)` · Requerido
+
+UUID del usuario clinico (terapeuta/operador) que conduce la sesion, registrado en `clinical.users`. Se persiste en `telemetry.sessions` para trazabilidad pero no participa en la inferencia ni en el filtrado del historial.
+
+---
+
+**`level`** · `string` · Requerido
+
+Identificador del nivel/escenario VR que se ejecuto en la sesion. Mapea al enum `telemetry.vr_level` en la base de datos; cualquier valor fuera de los permitidos en el enum sera rechazado por PostgreSQL.
+
+---
+
+**`variation`** · `string` · Requerido
+
+Variacion narrativa del nivel jugado. Mapea al enum `telemetry.narrative_variation`.
+
+---
+
+**`difficulty`** · `string` · Requerido
+
+Dificultad con la que el paciente jugo la sesion (la que se quiere evaluar y posiblemente ajustar). Mapea al enum `telemetry.vr_difficulty`. **No se confunde con la `recommendation` del response**, que es la dificultad sugerida para la siguiente sesion.
+
+---
+
+**`duration_min`** · `int >= 0` · Requerido
+
+Duracion total de la sesion VR en minutos, reportada por Unity. Solo se persiste para reporting clinico; no entra al modelo.
 
 ---
 
@@ -163,7 +198,7 @@ Cantidad de interacciones que se esperaba que el paciente realizara segun el dis
 | Campo | Descripcion |
 |---|---|
 | `metrics` | Las 7 metricas cognitivas calculadas para la sesion actual |
-| `cognitive_level` | Nivel cognitivo de la sesion derivado deterministicamente del SPS (informativo para el terapeuta) |
-| `recommendation` | Recomendacion de dificultad producida por el ML stateful |
+| `cognitive_level` | Nivel cognitivo de la sesion derivado deterministicamente del SPS (`low` / `medium` / `high`); se persiste y se devuelve como informacion clinica |
+| `recommendation` | Recomendacion de dificultad para la **proxima** sesion producida por el ML stateful |
 | `probabilities` | Confianza del modelo en cada clase (suma 1.0). Permite trazabilidad clinica |
 | `context` | Las 9 features de historial que el ML consumio + flag `cold_start` |
