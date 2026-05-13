@@ -13,7 +13,7 @@ class SessionInput(BaseModel):
     user_id: str
 
     # VR environment context
-    level: str
+    level: int
     variation: str
     difficulty: str
     duration_min: int = Field(ge=0)

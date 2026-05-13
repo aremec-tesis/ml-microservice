@@ -26,7 +26,7 @@ def cognitive_level_from_sps(sps: float) -> CognitiveLevel:
 class RawSessionData:
     patient_id: str
     user_id: str
-    level: str
+    level: int
     variation: str
     difficulty: str
     duration_min: int

@@ -8,8 +8,8 @@
 {
   "patient_id": "11111111-1111-1111-1111-111111111111",
   "user_id": "22222222-2222-2222-2222-222222222222",
-  "level": "level_1",
-  "variation": "standard",
+  "level": 1,
+  "variation": "El globo rojo",
   "difficulty": "medium",
   "duration_min": 12,
   "correct_key_objects": 4,
@@ -42,21 +42,21 @@ UUID del usuario clinico (terapeuta/operador) que conduce la sesion, registrado 
 
 ---
 
-**`level`** · `string` · Requerido
+**`level`** · `int` · Valores: `1`, `2` · Requerido
 
-Identificador del nivel/escenario VR que se ejecuto en la sesion. Mapea al enum `telemetry.vr_level` en la base de datos; cualquier valor fuera de los permitidos en el enum sera rechazado por PostgreSQL.
-
----
-
-**`variation`** · `string` · Requerido
-
-Variacion narrativa del nivel jugado. Mapea al enum `telemetry.narrative_variation`.
+Identificador del nivel/escenario VR que se ejecuto en la sesion. Valores permitidos: `1` o `2`. La base de datos rechaza cualquier otro valor via CHECK constraint.
 
 ---
 
-**`difficulty`** · `string` · Requerido
+**`variation`** · `string` · Valores: `"A"`, `"B"`, `"C"` · Requerido
 
-Dificultad con la que el paciente jugo la sesion (la que se quiere evaluar y posiblemente ajustar). Mapea al enum `telemetry.vr_difficulty`. **No se confunde con la `recommendation` del response**, que es la dificultad sugerida para la siguiente sesion.
+Variacion narrativa del nivel jugado. Valores permitidos: `"A"`, `"B"` o `"C"`. La base de datos rechaza cualquier otro valor via CHECK constraint.
+
+---
+
+**`difficulty`** · `string` · Valores: `"low"`, `"medium"`, `"high"` · Requerido
+
+Dificultad con la que el paciente jugo la sesion (la que se quiere evaluar y posiblemente ajustar). Valores permitidos: `"low"`, `"medium"`, `"high"`. **No se confunde con la `recommendation` del response**, que es la dificultad sugerida para la siguiente sesion.
 
 ---
 

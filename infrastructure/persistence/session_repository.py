@@ -66,10 +66,7 @@ class SessionRepository:
                     prob_decrease, prob_maintain, prob_increase
                 ) VALUES (
                     $1::uuid, $2::uuid,
-                    $3::telemetry.vr_level,
-                    $4::telemetry.narrative_variation,
-                    $5::telemetry.vr_difficulty,
-                    $6,
+                    $3, $4, $5, $6,
                     $7, $8, $9,
                     $10, $11,
                     $12, $13,
@@ -79,8 +76,7 @@ class SessionRepository:
                     $24, $25, $26,
                     $27, $28, $29, $30,
                     $31, $32, $33,
-                    $34::telemetry.cognitive_level,
-                    $35::telemetry.difficulty_recommendation,
+                    $34, $35,
                     $36, $37, $38
                 )
                 """,
