@@ -7,5 +7,3 @@ numpy
 pandas
 onnxruntime
 skl2onnx
-asyncpg
-python-dotenv

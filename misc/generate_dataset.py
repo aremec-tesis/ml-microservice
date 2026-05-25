@@ -33,6 +33,8 @@ HIGH_SPS_THRESHOLD = 0.7
 DELTA_SIGNIFICANT = -0.15
 SPS_IMPROVEMENT_FLOOR = 0.6
 TREND_THRESHOLD = 0.02
+# Mirror of domain.session_metrics.RTA_MAX_SECONDS — keep both in sync.
+RTA_MAX_SECONDS = 8.0
 
 Phenotype = Literal["improving", "stable", "declining"]
 
@@ -113,7 +115,8 @@ def _compute_metrics(raw: dict) -> dict:
         if raw["total_questions"]
         else 0.0
     )
-    sps = 0.3 * ors + 0.3 * ers + 0.2 * scs + 0.2 * (1 - er)
+    rta_score = min(1.0, max(0.0, 1.0 - rta / RTA_MAX_SECONDS))
+    sps = 0.3 * ors + 0.3 * ers + 0.2 * scs + 0.1 * (1 - er) + 0.1 * rta_score
 
     return {"ors": ors, "ers": ers, "scs": scs, "rta": rta, "er": er, "sps": sps}
 

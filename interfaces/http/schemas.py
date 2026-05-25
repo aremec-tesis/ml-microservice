@@ -4,53 +4,41 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from domain.session_metrics import RawSessionData
+from domain.patient_context import PatientContext
+from domain.session_metrics import SessionMetrics
+
+
+class SessionMetricsIn(BaseModel):
+    ors: float
+    ers: float
+    scs: float = Field(ge=0.0, le=1.0)
+    rta: float = Field(ge=0.0)
+    er: float = Field(ge=0.0, le=1.0)
+    sps: float
+
+    def to_domain(self) -> SessionMetrics:
+        return SessionMetrics(**self.model_dump())
+
+
+class PatientHistoryIn(BaseModel):
+    baseline_sps: float
+    slope_sps: float
+    delta_sps: float
+    mean_ors: float
+    mean_ers: float
+    mean_er: float
+    mean_rta: float
+    std_sps: float = Field(ge=0.0)
+    session_count: int = Field(ge=0)
+
+    def to_domain(self) -> PatientContext:
+        return PatientContext(**self.model_dump())
 
 
 class SessionInput(BaseModel):
-    # Identifiers
     patient_id: str
-    user_id: str
-
-    # VR environment context
-    level: int
-    variation: str
-    difficulty: str
-    duration_min: int = Field(ge=0)
-
-    # Raw metrics from Unity
-    correct_key_objects: int = Field(ge=0)
-    correct_secondary_objects: int = Field(ge=0)
-    incorrect_objects: int = Field(ge=0)
-    total_key_objects: int = Field(ge=0)
-    total_secondary_objects: int = Field(ge=0)
-    total_events: int = Field(ge=0)
-    correct_events: int = Field(ge=0)
-    comprehension_score: int = Field(ge=0, le=2)
-    response_times: list[float]
-    total_questions: int = Field(ge=0)
-    incorrect_answers: int = Field(ge=0)
-
-    def to_domain(self) -> RawSessionData:
-        return RawSessionData(
-            patient_id=self.patient_id,
-            user_id=self.user_id,
-            level=self.level,
-            variation=self.variation,
-            difficulty=self.difficulty,
-            duration_min=self.duration_min,
-            correct_key_objects=self.correct_key_objects,
-            correct_secondary_objects=self.correct_secondary_objects,
-            incorrect_objects=self.incorrect_objects,
-            total_key_objects=self.total_key_objects,
-            total_secondary_objects=self.total_secondary_objects,
-            total_events=self.total_events,
-            correct_events=self.correct_events,
-            comprehension_score=self.comprehension_score,
-            response_times=tuple(self.response_times),
-            total_questions=self.total_questions,
-            incorrect_answers=self.incorrect_answers,
-        )
+    session_metrics: SessionMetricsIn
+    patient_history: PatientHistoryIn
 
 
 class SessionMetricsOut(BaseModel):
@@ -82,6 +70,7 @@ class ProbabilitiesOut(BaseModel):
 
 
 class PredictionResponse(BaseModel):
+    patient_id: str
     metrics: SessionMetricsOut
     cognitive_level: Literal["low", "medium", "high"]
     recommendation: Literal[

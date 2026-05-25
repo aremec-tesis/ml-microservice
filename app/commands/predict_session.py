@@ -1,36 +1,27 @@
-"""Predict session command: orchestrates the full stateful prediction flow.
+"""Predict session command: stateless prediction flow.
 
 Flow:
-    1. Fetch patient history (query)
-    2. Compute session metrics from raw input
-    3. Derive patient longitudinal context (9 aggregated features)
-    4. Build the 15-feature vector and run the stateful ML
-    5. Derive cognitive_level deterministically from SPS for therapist reporting
-    6. Persist session with full traceability (features + probabilities)
-    7. Return rich result to the interface layer
+    1. Receive pre-computed session metrics and patient context (from the Central API)
+    2. Build the 15-feature vector and run the stateful ML
+    3. Derive cognitive_level deterministically from SPS for therapist reporting
+    4. Return the rich result to the interface layer
 """
 
 from dataclasses import dataclass
 
-from app.queries.get_patient_history import (
-    GetPatientHistoryHandler,
-    GetPatientHistoryQuery,
-)
 from domain.patient_context import PatientContext, feature_vector
 from domain.session_metrics import (
     CognitiveLevel,
-    RawSessionData,
     SessionMetrics,
     cognitive_level_from_sps,
 )
-from infrastructure.config import HISTORY_WINDOW
 from infrastructure.ml.onnx_classifier import ClassificationResult, OnnxClassifier
-from infrastructure.persistence.session_repository import SessionRepository
 
 
 @dataclass(frozen=True)
 class PredictSessionCommand:
-    raw: RawSessionData
+    metrics: SessionMetrics
+    context: PatientContext
 
 
 @dataclass(frozen=True)
@@ -42,40 +33,18 @@ class PredictSessionResult:
 
 
 class PredictSessionHandler:
-    def __init__(
-        self,
-        classifier: OnnxClassifier,
-        repository: SessionRepository,
-        history_handler: GetPatientHistoryHandler,
-    ) -> None:
+    def __init__(self, classifier: OnnxClassifier) -> None:
         self._classifier = classifier
-        self._repository = repository
-        self._history_handler = history_handler
 
-    async def handle(self, command: PredictSessionCommand) -> PredictSessionResult:
-        raw = command.raw
-
-        history = await self._history_handler.handle(
-            GetPatientHistoryQuery(patient_id=raw.patient_id, limit=HISTORY_WINDOW)
-        )
-
-        metrics = SessionMetrics.from_raw(raw)
-        context = PatientContext.from_history(history, current=metrics)
-        cognitive_level = cognitive_level_from_sps(metrics.sps)
-
-        classification = self._classifier.classify(feature_vector(metrics, context))
-
-        await self._repository.insert_session(
-            raw=raw,
-            metrics=metrics,
-            context=context,
-            cognitive_level=cognitive_level,
-            classification=classification,
+    def handle(self, command: PredictSessionCommand) -> PredictSessionResult:
+        cognitive_level = cognitive_level_from_sps(command.metrics.sps)
+        classification = self._classifier.classify(
+            feature_vector(command.metrics, command.context)
         )
 
         return PredictSessionResult(
-            metrics=metrics,
-            context=context,
+            metrics=command.metrics,
+            context=command.context,
             cognitive_level=cognitive_level,
             classification=classification,
         )

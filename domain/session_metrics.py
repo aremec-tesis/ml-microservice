@@ -1,4 +1,8 @@
-"""Domain value objects for raw session data, computed cognitive metrics, and classification labels."""
+"""Domain value objects for cognitive metrics and classification labels.
+
+The microservice receives the 6 cognitive metrics pre-computed by the Central API,
+so the raw-to-metrics transformation no longer lives here.
+"""
 
 from dataclasses import dataclass
 from enum import Enum
@@ -23,27 +27,6 @@ def cognitive_level_from_sps(sps: float) -> CognitiveLevel:
 
 
 @dataclass(frozen=True)
-class RawSessionData:
-    patient_id: str
-    user_id: str
-    level: int
-    variation: str
-    difficulty: str
-    duration_min: int
-    correct_key_objects: int
-    correct_secondary_objects: int
-    incorrect_objects: int
-    total_key_objects: int
-    total_secondary_objects: int
-    total_events: int
-    correct_events: int
-    comprehension_score: int
-    response_times: tuple[float, ...]
-    total_questions: int
-    incorrect_answers: int
-
-
-@dataclass(frozen=True)
 class SessionMetrics:
     ors: float
     ers: float
@@ -51,25 +34,3 @@ class SessionMetrics:
     rta: float
     er: float
     sps: float
-
-    @classmethod
-    def from_raw(cls, raw: RawSessionData) -> "SessionMetrics":
-        ors_den = raw.total_key_objects * 2 + raw.total_secondary_objects
-        ors_num = (
-            raw.correct_key_objects * 2
-            + raw.correct_secondary_objects
-            - raw.incorrect_objects
-        )
-        ors = ors_num / ors_den if ors_den > 0 else 0.0
-
-        ers = raw.correct_events / raw.total_events if raw.total_events else 0.0
-        scs = raw.comprehension_score / 2.0
-        rta = (
-            sum(raw.response_times) / len(raw.response_times)
-            if raw.response_times
-            else 0.0
-        )
-        er = raw.incorrect_answers / raw.total_questions if raw.total_questions else 0.0
-        sps = 0.3 * ors + 0.3 * ers + 0.2 * scs + 0.2 * (1 - er)
-
-        return cls(ors=ors, ers=ers, scs=scs, rta=rta, er=er, sps=sps)
