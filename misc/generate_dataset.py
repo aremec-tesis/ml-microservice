@@ -33,7 +33,10 @@ HIGH_SPS_THRESHOLD = 0.7
 DELTA_SIGNIFICANT = -0.15
 SPS_IMPROVEMENT_FLOOR = 0.6
 TREND_THRESHOLD = 0.02
-# Mirror of domain.session_metrics.RTA_MAX_SECONDS — keep both in sync.
+# Mirrors the RTA_MAX_SECONDS the Central API uses to compute the real SPS it
+# sends at inference time (this constant no longer lives in this repo's domain
+# layer). Do NOT change this value without also updating the Central API —
+# doing so would desync the training-time SPS scale from the production one.
 RTA_MAX_SECONDS = 8.0
 
 Phenotype = Literal["improving", "stable", "declining"]
@@ -79,9 +82,15 @@ def _sample_session_raw(theta: float, rng: np.random.Generator) -> dict:
         rng.binomial(total_questions, np.clip(1.0 - theta, 0.05, 0.95))
     )
 
-    log_mean = math.log(2.0 + (1.0 - theta) * 4.0)
+    # Baseline reflects genuine reading+evaluation time (~4.5-6.5s is normal pace
+    # regardless of skill), with only a mild skill-dependent slowdown — accuracy
+    # and deliberation speed are largely orthogonal, so "perfect but ~6s" must be
+    # a common, plausible combination in training (previously this was ~2s-only
+    # for skilled patients, making real ~6s responses look like out-of-distribution
+    # decline signals).
+    log_mean = math.log(4.5 + (1.0 - theta) * 6.5)
     response_times = rng.lognormal(mean=log_mean, sigma=0.3, size=total_questions)
-    response_times = np.clip(response_times, 0.3, 15.0)
+    response_times = np.clip(response_times, 0.3, 25.0)
 
     return {
         "comprehension_score": _sample_comprehension(theta, rng),

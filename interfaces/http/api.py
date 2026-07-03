@@ -10,7 +10,7 @@ from app.commands.predict_session import (
     PredictSessionCommand,
     PredictSessionHandler,
 )
-from infrastructure.config import MODEL_PATH, SCALER_PATH
+from infrastructure.config import CENTRAL_API_ORIGIN, MODEL_PATH, SCALER_PATH
 from infrastructure.ml.onnx_classifier import OnnxClassifier
 from interfaces.http.schemas import (
     PatientContextOut,
@@ -45,10 +45,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[CENTRAL_API_ORIGIN],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["POST"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
